@@ -8,7 +8,7 @@ const https       = require('https');
 const http        = require('http');
 
 // --- 🔒 CONFIGURATION HARDLOCKED ---
-const BOT_TOKEN     = process.env.BOT_TOKEN     || '8805762974:AAF1MiTNy9HffCv1AXDGP2QIHWSxlmrW1RU';
+const BOT_TOKEN     = process.env.BOT_TOKEN     || '8805762974:AAH1yHBXSwRVnPaQyc6Jey0eU0MN9oyKXQ4';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '7485181331';
 const PORT          = process.env.PORT          || 10000; // Fixed for Render deployment standards
 const RENDER_URL    = process.env.RENDER_URL    || 'https://fk-stock-final.onrender.com'; 
