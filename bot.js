@@ -187,11 +187,22 @@ function parsePrice(str) {
   return valid.length ? Math.max(...valid) : null;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// scrapeFK — extracts:
+//   price        = "Price to Buy"      (finalPrice in ppd JSON)
+//   lowestPrice  = "Lowest Price for You" (nepPrice  in ppd JSON = with bank offer)
+//   effectivePrice = Math.min(price, lowestPrice)
+//
+// PRIMARY source  : "ppd" embedded JSON  →  finalPrice / nepPrice
+// FALLBACK source : cheerio CSS selectors + DOM text scan
+// ─────────────────────────────────────────────────────────────────────────────
 async function scrapeFK(url) {
   if (!url.includes('www.flipkart.com')) url = url.replace('flipkart.com', 'www.flipkart.com');
+
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       console.log(`[Scraper] Attempt ${attempt}: ${url.slice(0, 65)}`);
+
       const resp = await axios.get(url, {
         headers: {
           'User-Agent': nextUA(),
@@ -210,129 +221,127 @@ async function scrapeFK(url) {
           'sec-ch-ua-mobile': '?0',
           'sec-ch-ua-platform': '"Windows"',
           'DNT': '1',
-          'Cookie': 'T=1; _session_id=abc123; flCart=; fn=Guest; fm=G',
         },
         timeout: 20000, maxRedirects: 5, decompress: true,
       });
 
-      const $ = cheerio.load(resp.data);
+      const html = resp.data;
+      const $    = cheerio.load(html);
 
-      // ── Name ──────────────────────────────────────────────────
+      // ── Name ────────────────────────────────────────────────────────────────
       let name = '';
       for (const s of ['span.VU-ZEz', 'span.B_NuCI', '._35KyD6', 'h1 span', '.yhB1nd', 'title']) {
-        const t = s === 'title' ? $('title').text().split('|')[0].split('-')[0].trim() : $(s).first().text().trim();
+        const t = s === 'title'
+          ? $('title').text().split('|')[0].split('-')[0].trim()
+          : $(s).first().text().trim();
         if (t && t.length > 4) { name = t; break; }
       }
       if (!name) name = 'Flipkart Product';
 
-      // ── Main Price ────────────────────────────────────────────
-      let price = null;
-      for (const s of [
-        'div.Nx9bqj.CxhGGd', 'div.Nx9bqj', '.CEmiEU .Nx9bqj',
-        '._30jeq3._16Jk6d', '._16Jk6d', '._25b18c ._30jeq3',
-        '.hl05eU .Nx9bqj', '.hl05eU', '[class*="Nx9bqj"]',
-      ]) {
-        const t = $(s).first().text().trim();
-        const p = parsePrice(t);
-        if (p && p > 100) { price = p; break; }
-      }
-      if (!price) {
-        const allPrices = [];
-        $('*').each((_, el) => {
-          const own = $(el).clone().children().remove().end().text().trim();
-          if (own.startsWith('₹') || own.match(/^₹[\d,]+$/)) {
-            const p = parsePrice(own);
-            if (p && p > 999) allPrices.push(p);
-          }
-        });
-        if (allPrices.length) price = allPrices.sort((a, b) => b - a)[0];
-      }
-
-      // ══════════════════════════════════════════════════════════
-      // ── Lowest Price (from "Apply offers for maximum savings") ─
-      // ══════════════════════════════════════════════════════════
+      let price       = null;
       let lowestPrice = null;
 
-      // Strategy 1: Flipkart dedicated CSS selectors
-      for (const s of [
-        '.yRaY8j.ZYYwLA', '.ZYYwLA', '.yRaY8j',
-        '._3HWev4 .Nx9bqj', '._2-gKeQ', '.PCWT0u',
-        '.LFwuGS', '.Ws0mKI', '[class*="yRaY8j"]', '[class*="ZYYwLA"]',
-      ]) {
-        const t = $(s).first().text().trim();
-        const p = parsePrice(t);
-        if (p && p > 100) { lowestPrice = p; console.log(`[Scraper] lowestPrice via selector "${s}": ₹${p}`); break; }
+      // ════════════════════════════════════════════════════════════════════════
+      // STRATEGY 0 — "ppd" embedded JSON  ★ MOST RELIABLE ★
+      //   Flipkart bakes product-price data into the static HTML as a JSON blob:
+      //   "ppd":{"fsp":56900,"finalPrice":56900,"mrp":59900,"nepPrice":50255,...}
+      //
+      //   finalPrice → Price to Buy
+      //   nepPrice   → Lowest Price for You (Net Effective Price with bank offer)
+      //   mrp        → MRP (strikethrough)
+      // ════════════════════════════════════════════════════════════════════════
+      const ppdMatch = html.match(/"ppd"\s*:\s*(\{[^}]+\})/);
+      if (ppdMatch) {
+        try {
+          const ppd = JSON.parse(ppdMatch[1]);
+          if (ppd.finalPrice && ppd.finalPrice > 100) price       = ppd.finalPrice;
+          if (ppd.nepPrice   && ppd.nepPrice   > 100) lowestPrice = ppd.nepPrice;
+          console.log(`[Scraper] ✅ ppd JSON → Price:₹${price}  LowestForYou:₹${lowestPrice}  MRP:₹${ppd.mrp}`);
+        } catch (e) {
+          console.log('[Scraper] ppd parse error:', e.message);
+        }
       }
 
-      // Strategy 2: Find "Apply offers for maximum savings" section node → min price inside it
+      // ════════════════════════════════════════════════════════════════════════
+      // STRATEGY 1 — nepPrice bare regex  (if ppd block was split/minified)
+      // ════════════════════════════════════════════════════════════════════════
       if (!lowestPrice) {
-        let offerSectionEl = null;
-        $('*').each((_, el) => {
-          if (offerSectionEl) return false;
-          const ownTxt = $(el).clone().children().remove().end().text().trim();
-          if (/apply\s+offers\s+for\s+maximum\s+savings/i.test(ownTxt)) { offerSectionEl = el; }
-        });
-        if (!offerSectionEl) {
-          $('*').each((_, el) => {
-            if (offerSectionEl) return false;
-            const childCount = $(el).find('*').length;
-            if (childCount < 300 && /apply\s+offers\s+for\s+maximum\s+savings/i.test($(el).text())) {
-              offerSectionEl = el;
-            }
-          });
-        }
-        if (offerSectionEl) {
-          const sectionPrices = [];
-          const rupeeMatches = $(offerSectionEl).text().match(/₹[\d,]+/g) || [];
-          for (const m of rupeeMatches) { const p = parsePrice(m); if (p && p > 100) sectionPrices.push(p); }
-          if (sectionPrices.length) {
-            lowestPrice = Math.min(...sectionPrices);
-            console.log(`[Scraper] lowestPrice via "Apply offers" section: ₹${lowestPrice}`);
-          }
+        const nepMatch = html.match(/"nepPrice"\s*:\s*(\d+)/);
+        if (nepMatch) {
+          const p = parseInt(nepMatch[1]);
+          if (p > 100) { lowestPrice = p; console.log(`[Scraper] ✅ nepPrice regex → LowestForYou:₹${p}`); }
         }
       }
 
-      // Strategy 3: Scan for "lowest price" text → nearby ₹ number
+      // ════════════════════════════════════════════════════════════════════════
+      // STRATEGY 2 — finalPrice bare regex  (fallback for price)
+      // ════════════════════════════════════════════════════════════════════════
+      if (!price) {
+        const fpMatch = html.match(/"finalPrice"\s*:\s*(\d+)/);
+        if (fpMatch) {
+          const p = parseInt(fpMatch[1]);
+          if (p > 100) { price = p; console.log(`[Scraper] ✅ finalPrice regex → Price:₹${p}`); }
+        }
+      }
+
+      // ════════════════════════════════════════════════════════════════════════
+      // STRATEGY 3 — CSS selectors for main price  (cheerio fallback)
+      // ════════════════════════════════════════════════════════════════════════
+      if (!price) {
+        for (const s of [
+          'div.Nx9bqj.CxhGGd', 'div.Nx9bqj', '.CEmiEU .Nx9bqj',
+          '._30jeq3._16Jk6d', '._16Jk6d', '._25b18c ._30jeq3',
+          '.hl05eU .Nx9bqj', '.hl05eU', '[class*="Nx9bqj"]',
+        ]) {
+          const t = $(s).first().text().trim();
+          const p = parsePrice(t);
+          if (p && p > 100) { price = p; console.log(`[Scraper] price via selector "${s}": ₹${p}`); break; }
+        }
+      }
+
+      // ════════════════════════════════════════════════════════════════════════
+      // STRATEGY 4 — "Lowest price for you" text node  (cheerio fallback)
+      // ════════════════════════════════════════════════════════════════════════
       if (!lowestPrice) {
         $('*').each((_, el) => {
           if (lowestPrice) return false;
           const own = $(el).clone().children().remove().end().text().trim().toLowerCase();
-          if (own.includes('lowest price')) {
+          if (own === 'lowest price for you' || own === 'lowest price') {
             const prices = [];
-            for (const txt of [$(el).text(), $(el).parent().text(), $(el).next().text()]) {
-              (txt.match(/₹[\d,]+/g) || []).forEach(m => { const p = parsePrice(m); if (p && p > 100) prices.push(p); });
-            }
-            if (prices.length) { lowestPrice = Math.min(...prices); return false; }
+            [$(el).parent().text(), $(el).closest('[class]').text(), $(el).prev().text()].forEach(txt => {
+              (txt.match(/₹[\d,]+/g) || []).forEach(m => {
+                const p = parsePrice(m);
+                if (p && p > 100) prices.push(p);
+              });
+            });
+            if (prices.length) { lowestPrice = Math.min(...prices); }
           }
         });
-        if (lowestPrice) console.log(`[Scraper] lowestPrice via "lowest price" text: ₹${lowestPrice}`);
+        if (lowestPrice) console.log(`[Scraper] lowestPrice via "lowest price for you" text: ₹${lowestPrice}`);
       }
 
-      // Strategy 4: Bank/card offer containers — price strictly below main price
-      if (!lowestPrice && price) {
-        for (const s of ['[class*="offer"]','[class*="Offer"]','[class*="bank"]','[class*="Bank"]','[class*="savings"]','[class*="cashback"]','[class*="coupon"]']) {
-          $(s).each((_, el) => {
-            if (lowestPrice) return false;
-            const candidates = ($(el).text().match(/₹[\d,]+/g) || []).map(parsePrice).filter(p => p && p > 100 && p < price);
-            if (candidates.length) { lowestPrice = Math.min(...candidates); }
-          });
-          if (lowestPrice) break;
-        }
-        if (lowestPrice) console.log(`[Scraper] lowestPrice via offer container: ₹${lowestPrice}`);
-      }
-
-      // Strategy 5: Any standalone ₹ price lower than main price
+      // ════════════════════════════════════════════════════════════════════════
+      // STRATEGY 5 — any ₹ price lower than main price (last resort)
+      // ════════════════════════════════════════════════════════════════════════
       if (!lowestPrice && price) {
         const allLower = [];
         $('*').each((_, el) => {
           const own = $(el).clone().children().remove().end().text().trim();
-          if (own.match(/^₹[\d,]+$/)) { const p = parsePrice(own); if (p && p > 100 && p < price) allLower.push(p); }
+          if (own.match(/^₹[\d,]+$/)) {
+            const p = parsePrice(own);
+            if (p && p > 100 && p < price) allLower.push(p);
+          }
         });
-        if (allLower.length) { lowestPrice = Math.min(...allLower); console.log(`[Scraper] lowestPrice via page scan: ₹${lowestPrice}`); }
+        if (allLower.length) {
+          lowestPrice = Math.min(...allLower);
+          console.log(`[Scraper] lowestPrice via page scan: ₹${lowestPrice}`);
+        }
       }
 
+      // ════════════════════════════════════════════════════════════════════════
+      // FINAL — if no bank offer found, lowestPrice = price (same)
+      // ════════════════════════════════════════════════════════════════════════
       if (!lowestPrice) lowestPrice = price;
-
       const effectivePrice = Math.min(price, lowestPrice);
 
       if (!price) {
@@ -341,7 +350,7 @@ async function scrapeFK(url) {
         return null;
       }
 
-      console.log(`[Scraper] ✅ "${name.slice(0, 35)}" | Price ₹${price} | Lowest ₹${lowestPrice} | Effective ₹${effectivePrice}`);
+      console.log(`[Scraper] ✅ "${name.slice(0, 35)}" | PriceToBuy:₹${price} | LowestForYou:₹${lowestPrice} | Effective:₹${effectivePrice}`);
       return { name, price, lowestPrice, effectivePrice };
 
     } catch (e) {
@@ -380,12 +389,15 @@ async function runCheck() {
     try {
       const info = await scrapeFK(p.url);
       if (!info || !info.price) { console.log(`[Check] ⚠️  No data: ${p.name.slice(0, 30)}`); continue; }
+
       const prevEff = p.effectivePrice || p.lowestPrice || p.price;
       const newEff  = info.effectivePrice;
-      const pc = info.price !== p.price;
+      const pc = info.price       !== p.price;
       const lc = info.lowestPrice !== p.lowestPrice;
-      const ec = newEff !== prevEff;
+      const ec = newEff           !== prevEff;
+
       p.lastChecked = new Date().toISOString();
+
       if (pc || lc || ec) {
         let msg = `🚨 <b>PRICE ALERT!</b>\n\n📦 <b>${p.name.slice(0, 60)}</b>\n\n`;
         if (ec) {
@@ -409,7 +421,7 @@ async function runCheck() {
         for (const uid of targets) await tg(uid, msg);
         console.log(`[Alert] 🔔 Sent: ${p.name.slice(0, 30)}`);
       } else {
-        console.log(`[Check] ✅ No change: ${p.name.slice(0, 30)} ₹${info.price}`);
+        console.log(`[Check] ✅ No change: ${p.name.slice(0, 30)} | Buy:₹${info.price} | LowestForYou:₹${info.lowestPrice}`);
         saveDB();
       }
     } catch (e) { console.error('[Check] Error:', e.message); }
@@ -429,8 +441,6 @@ setInterval(() => {
 }, 25000);
 
 // ─── WEB PANEL ────────────────────────────────────────────────────────────────
-// NOTE: PANEL uses a regular string (single quotes) — NOT a template literal.
-// This avoids nested backtick conflicts with the renderList JS inside <script>.
 const PANEL = '<!DOCTYPE html>\n' +
 '<html lang="en">\n' +
 '<head>\n' +
@@ -502,7 +512,7 @@ const PANEL = '<!DOCTYPE html>\n' +
 '<nav>\n' +
 '  <div class="brand">\n' +
 '    <span style="font-size:24px">&#128722;</span>\n' +
-'    <div><h1>Flipkart Price Alert Bot</h1><small>axios+cheerio &middot; 15s interval &middot; 24/7</small></div>\n' +
+'    <div><h1>Flipkart Price Alert Bot</h1><small>ppd-JSON &middot; 15s interval &middot; 24/7</small></div>\n' +
 '  </div>\n' +
 '  <div class="pill"><div class="dot" id="sdot"></div><span id="stxt">Loading&hellip;</span></div>\n' +
 '</nav>\n' +
@@ -608,18 +618,18 @@ const PANEL = '<!DOCTYPE html>\n' +
 '  var url=document.getElementById("purl").value.trim();\n' +
 '  if(!url)return toast("Enter a URL","err");\n' +
 '  if(!url.includes("flipkart.com"))return toast("Only Flipkart links!","err");\n' +
-'  log("Fetching: "+url.slice(0,55)+"…");\n' +
+'  log("Fetching: "+url.slice(0,55)+"\\u2026");\n' +
 '  try{\n' +
 '    var r=await fetch("/api/products",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:url})});\n' +
 '    var d=await r.json();\n' +
 '    if(d.success){\n' +
 '      toast(d.product.name.slice(0,35));\n' +
-'      log("✅ "+d.product.name+" | Best ₹"+fmt(d.product.effectivePrice||d.product.lowestPrice)+" | MRP ₹"+fmt(d.product.price),"ls");\n' +
+'      log("\\u2705 "+d.product.name+" | LowestForYou \\u20b9"+fmt(d.product.lowestPrice)+" | Buy \\u20b9"+fmt(d.product.price),"ls");\n' +
 '      document.getElementById("purl").value="";\n' +
 '      loadData();\n' +
 '    }else{\n' +
 '      toast(d.error||"Failed","err");\n' +
-'      log("❌ "+(d.error||"Failed"),"le");\n' +
+'      log("\\u274c "+(d.error||"Failed"),"le");\n' +
 '    }\n' +
 '  }catch(e){toast("Error","err");}\n' +
 '}\n' +
@@ -632,11 +642,11 @@ const PANEL = '<!DOCTYPE html>\n' +
 '}\n' +
 '\n' +
 'async function ctrl(a){\n' +
-'  log("→ "+a,"lw");\n' +
+'  log("\\u2192 "+a,"lw");\n' +
 '  var r=await fetch("/api/control",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:a})});\n' +
 '  var d=await r.json();\n' +
 '  toast(d.message);\n' +
-'  log("✅ "+d.message,"ls");\n' +
+'  log("\\u2705 "+d.message,"ls");\n' +
 '  loadData();\n' +
 '}\n' +
 '\n' +
