@@ -135,7 +135,7 @@ bot.onText(/\/status/, async msg => {
   );
 });
 
-// ─── URL RESOLVER: dl.flipkart.com → www.flipkart.com ────────────────────────
+// ─── URL RESOLVER ─────────────────────────────────────────────────────────────
 async function resolveUrl(url) {
   if (!url.includes('dl.flipkart.com') && !url.includes('fkrt.it')) return url;
   console.log('[Resolver] Resolving deep link:', url.slice(0, 70));
@@ -145,9 +145,7 @@ async function resolveUrl(url) {
         'User-Agent': 'Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 Chrome/124.0.0.0 Mobile Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8',
       },
-      maxRedirects: 10,
-      timeout: 15000,
-      validateStatus: s => s < 400,
+      maxRedirects: 10, timeout: 15000, validateStatus: s => s < 400,
     });
     const finalUrl = resp.request?.res?.responseUrl || resp.config?.url || url;
     if (finalUrl && finalUrl.includes('flipkart.com') && !finalUrl.includes('dl.flipkart.com')) {
@@ -158,9 +156,7 @@ async function resolveUrl(url) {
         return clean;
       } catch { return finalUrl; }
     }
-  } catch (e) {
-    console.log('[Resolver] Redirect follow error:', e.message);
-  }
+  } catch (e) { console.log('[Resolver] Error:', e.message); }
   try {
     const u = new URL(url);
     const slug = u.pathname.replace(/^\/dl\//, '');
@@ -173,7 +169,7 @@ async function resolveUrl(url) {
   return url;
 }
 
-// ─── SCRAPER: axios + cheerio ─────────────────────────────────────────────────
+// ─── SCRAPER ──────────────────────────────────────────────────────────────────
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
@@ -192,17 +188,14 @@ function parsePrice(str) {
 }
 
 async function scrapeFK(url) {
-  if (!url.includes('www.flipkart.com')) {
-    url = url.replace('flipkart.com', 'www.flipkart.com');
-  }
+  if (!url.includes('www.flipkart.com')) url = url.replace('flipkart.com', 'www.flipkart.com');
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       console.log(`[Scraper] Attempt ${attempt}: ${url.slice(0, 65)}`);
-      const ua = nextUA();
       const resp = await axios.get(url, {
         headers: {
-          'User-Agent': ua,
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+          'User-Agent': nextUA(),
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
           'Accept-Language': 'en-IN,en;q=0.9,hi;q=0.8',
           'Accept-Encoding': 'gzip, deflate, br',
           'Connection': 'keep-alive',
@@ -219,9 +212,7 @@ async function scrapeFK(url) {
           'DNT': '1',
           'Cookie': 'T=1; _session_id=abc123; flCart=; fn=Guest; fm=G',
         },
-        timeout: 20000,
-        maxRedirects: 5,
-        decompress: true,
+        timeout: 20000, maxRedirects: 5, decompress: true,
       });
 
       const $ = cheerio.load(resp.data);
@@ -234,7 +225,7 @@ async function scrapeFK(url) {
       }
       if (!name) name = 'Flipkart Product';
 
-      // ── Main Price (Price to Buy) ─────────────────────────────
+      // ── Main Price ────────────────────────────────────────────
       let price = null;
       for (const s of [
         'div.Nx9bqj.CxhGGd', 'div.Nx9bqj', '.CEmiEU .Nx9bqj',
@@ -254,151 +245,94 @@ async function scrapeFK(url) {
             if (p && p > 999) allPrices.push(p);
           }
         });
-        if (allPrices.length) price = allPrices.sort((a,b)=>b-a)[0];
+        if (allPrices.length) price = allPrices.sort((a, b) => b - a)[0];
       }
 
-      // ══════════════════════════════════════════════════════════════════
-      // ── Lowest Price For You (from "Apply offers for maximum savings") ─
-      // ══════════════════════════════════════════════════════════════════
+      // ══════════════════════════════════════════════════════════
+      // ── Lowest Price (from "Apply offers for maximum savings") ─
+      // ══════════════════════════════════════════════════════════
       let lowestPrice = null;
 
-      // Strategy 1: Dedicated Flipkart CSS selectors for "Lowest price for you" label
-      // These classes wrap the ₹ price shown below the "Apply offers for maximum savings" heading
+      // Strategy 1: Flipkart dedicated CSS selectors
       for (const s of [
-        '.yRaY8j.ZYYwLA',   // most specific – price inside lowest-price badge
-        '.ZYYwLA',           // price span in the offers block
-        '.yRaY8j',           // label + price combo
-        '._3HWev4 .Nx9bqj', // offer section price
-        '._2-gKeQ',
-        '.PCWT0u',
-        '.LFwuGS',
-        '.Ws0mKI',
-        '[class*="yRaY8j"]',
-        '[class*="ZYYwLA"]',
+        '.yRaY8j.ZYYwLA', '.ZYYwLA', '.yRaY8j',
+        '._3HWev4 .Nx9bqj', '._2-gKeQ', '.PCWT0u',
+        '.LFwuGS', '.Ws0mKI', '[class*="yRaY8j"]', '[class*="ZYYwLA"]',
       ]) {
         const t = $(s).first().text().trim();
         const p = parsePrice(t);
         if (p && p > 100) { lowestPrice = p; console.log(`[Scraper] lowestPrice via selector "${s}": ₹${p}`); break; }
       }
 
-      // Strategy 2: Find the "Apply offers for maximum savings" SECTION NODE
-      // then grab the SMALLEST ₹ price inside it (that's the final lowest price)
+      // Strategy 2: Find "Apply offers for maximum savings" section node → min price inside it
       if (!lowestPrice) {
         let offerSectionEl = null;
-
-        // Walk every element, find the one whose direct text matches the heading
         $('*').each((_, el) => {
           if (offerSectionEl) return false;
           const ownTxt = $(el).clone().children().remove().end().text().trim();
-          if (/apply\s+offers\s+for\s+maximum\s+savings/i.test(ownTxt)) {
-            offerSectionEl = el;
-          }
+          if (/apply\s+offers\s+for\s+maximum\s+savings/i.test(ownTxt)) { offerSectionEl = el; }
         });
-
-        // If not found by own text, try full subtree text (heading may be in a child)
         if (!offerSectionEl) {
           $('*').each((_, el) => {
             if (offerSectionEl) return false;
-            const fullTxt = $(el).text();
-            if (/apply\s+offers\s+for\s+maximum\s+savings/i.test(fullTxt)) {
-              // Only commit if the element is "small enough" (not the whole body)
-              const childCount = $(el).find('*').length;
-              if (childCount < 300) offerSectionEl = el;
+            const childCount = $(el).find('*').length;
+            if (childCount < 300 && /apply\s+offers\s+for\s+maximum\s+savings/i.test($(el).text())) {
+              offerSectionEl = el;
             }
           });
         }
-
         if (offerSectionEl) {
-          // Collect ALL ₹ numbers inside this section
           const sectionPrices = [];
-          const sectionHtml = $(offerSectionEl).text();
-          const rupeeMatches = sectionHtml.match(/₹[\d,]+/g) || [];
-          for (const m of rupeeMatches) {
-            const p = parsePrice(m);
-            if (p && p > 100) sectionPrices.push(p);
-          }
+          const rupeeMatches = $(offerSectionEl).text().match(/₹[\d,]+/g) || [];
+          for (const m of rupeeMatches) { const p = parsePrice(m); if (p && p > 100) sectionPrices.push(p); }
           if (sectionPrices.length) {
-            // The LOWEST value in the offer section = "Lowest price for you"
             lowestPrice = Math.min(...sectionPrices);
-            console.log(`[Scraper] lowestPrice via "Apply offers" section: ₹${lowestPrice} (found: ${sectionPrices})`);
+            console.log(`[Scraper] lowestPrice via "Apply offers" section: ₹${lowestPrice}`);
           }
         }
       }
 
-      // Strategy 3: Scan every element whose OWN text contains "lowest price"
-      // then look for a ₹ number nearby (sibling, parent, or same subtree)
+      // Strategy 3: Scan for "lowest price" text → nearby ₹ number
       if (!lowestPrice) {
         $('*').each((_, el) => {
           if (lowestPrice) return false;
           const own = $(el).clone().children().remove().end().text().trim().toLowerCase();
           if (own.includes('lowest price')) {
-            // Try subtree of this element first
-            const subtreePrices = [];
-            const fullTxt = $(el).text();
-            const m1 = fullTxt.match(/₹[\d,]+/g) || [];
-            for (const m of m1) { const p = parsePrice(m); if (p && p > 100) subtreePrices.push(p); }
-
-            // Try parent element's subtree
-            const parentTxt = $(el).parent().text();
-            const m2 = parentTxt.match(/₹[\d,]+/g) || [];
-            for (const m of m2) { const p = parsePrice(m); if (p && p > 100) subtreePrices.push(p); }
-
-            // Try next sibling
-            const sibTxt = $(el).next().text();
-            const m3 = sibTxt.match(/₹[\d,]+/g) || [];
-            for (const m of m3) { const p = parsePrice(m); if (p && p > 100) subtreePrices.push(p); }
-
-            if (subtreePrices.length) {
-              lowestPrice = Math.min(...subtreePrices);
-              console.log(`[Scraper] lowestPrice via "lowest price" text scan: ₹${lowestPrice}`);
-              return false;
+            const prices = [];
+            for (const txt of [$(el).text(), $(el).parent().text(), $(el).next().text()]) {
+              (txt.match(/₹[\d,]+/g) || []).forEach(m => { const p = parsePrice(m); if (p && p > 100) prices.push(p); });
             }
+            if (prices.length) { lowestPrice = Math.min(...prices); return false; }
           }
         });
+        if (lowestPrice) console.log(`[Scraper] lowestPrice via "lowest price" text: ₹${lowestPrice}`);
       }
 
-      // Strategy 4: Bank/card offer containers – find a price strictly BELOW main price
+      // Strategy 4: Bank/card offer containers — price strictly below main price
       if (!lowestPrice && price) {
-        const offerSelectors = [
-          '[class*="offer"]', '[class*="Offer"]',
-          '[class*="bank"]',  '[class*="Bank"]',
-          '[class*="savings"]', '[class*="Savings"]',
-          '[class*="cashback"]', '[class*="coupon"]',
-          '[class*="deal"]',
-        ];
-        for (const s of offerSelectors) {
+        for (const s of ['[class*="offer"]','[class*="Offer"]','[class*="bank"]','[class*="Bank"]','[class*="savings"]','[class*="cashback"]','[class*="coupon"]']) {
           $(s).each((_, el) => {
             if (lowestPrice) return false;
-            const txt = $(el).text();
-            const matches = txt.match(/₹[\d,]+/g) || [];
-            const candidates = matches.map(parsePrice).filter(p => p && p > 100 && p < price);
-            if (candidates.length) { lowestPrice = Math.min(...candidates); return false; }
+            const candidates = ($(el).text().match(/₹[\d,]+/g) || []).map(parsePrice).filter(p => p && p > 100 && p < price);
+            if (candidates.length) { lowestPrice = Math.min(...candidates); }
           });
           if (lowestPrice) break;
         }
-        if (lowestPrice) console.log(`[Scraper] lowestPrice via bank/offer container: ₹${lowestPrice}`);
+        if (lowestPrice) console.log(`[Scraper] lowestPrice via offer container: ₹${lowestPrice}`);
       }
 
-      // Strategy 5: Any standalone ₹ price on page that is strictly lower than main price
+      // Strategy 5: Any standalone ₹ price lower than main price
       if (!lowestPrice && price) {
         const allLower = [];
         $('*').each((_, el) => {
           const own = $(el).clone().children().remove().end().text().trim();
-          if (own.match(/^₹[\d,]+$/)) {
-            const p = parsePrice(own);
-            if (p && p > 100 && p < price) allLower.push(p);
-          }
+          if (own.match(/^₹[\d,]+$/)) { const p = parsePrice(own); if (p && p > 100 && p < price) allLower.push(p); }
         });
-        if (allLower.length) {
-          lowestPrice = Math.min(...allLower);
-          console.log(`[Scraper] lowestPrice via page-wide lower price scan: ₹${lowestPrice}`);
-        }
+        if (allLower.length) { lowestPrice = Math.min(...allLower); console.log(`[Scraper] lowestPrice via page scan: ₹${lowestPrice}`); }
       }
 
-      // Final fallback: lowestPrice = main price (no bank offer found)
       if (!lowestPrice) lowestPrice = price;
 
-      // ── Effective Price = whichever is LOWER ──────────────────
       const effectivePrice = Math.min(price, lowestPrice);
 
       if (!price) {
@@ -412,7 +346,7 @@ async function scrapeFK(url) {
 
     } catch (e) {
       console.error(`[Scraper] Attempt ${attempt} error: ${e.message}`);
-      if (e.response?.status === 403) console.log('[Scraper] 403 — Flipkart blocked this request, rotating UA and retrying...');
+      if (e.response?.status === 403) console.log('[Scraper] 403 — rotating UA...');
       if (attempt < 3) await sleep(5000);
     }
   }
@@ -495,176 +429,224 @@ setInterval(() => {
 }, 25000);
 
 // ─── WEB PANEL ────────────────────────────────────────────────────────────────
-const PANEL = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Flipkart Price Alert</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#07090f;--card:#0d1117;--b:#1e2a3a;--acc:#2563eb;--grn:#10b981;--red:#ef4444;--amb:#f59e0b;--tx:#e2e8f0;--mu:#64748b;--fi:#111827}
-body{background:var(--bg);color:var(--tx);font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh}
-nav{background:linear-gradient(90deg,#0f2460,#1e40af 60%,#2563eb);height:60px;display:flex;align-items:center;justify-content:space-between;padding:0 28px;box-shadow:0 2px 20px rgba(37,99,235,.5);position:sticky;top:0;z-index:100}
-.brand{display:flex;align-items:center;gap:10px}
-.brand h1{font-size:17px;font-weight:700;color:#fff}
-.brand small{color:#93c5fd;font-size:11px}
-.pill{display:flex;align-items:center;gap:7px;background:rgba(0,0,0,.35);padding:5px 14px;border-radius:20px;font-size:12px;color:#e2e8f0}
-.dot{width:8px;height:8px;border-radius:50%}
-.dot.on{background:#10b981;box-shadow:0 0 0 3px rgba(16,185,129,.25);animation:blink 1.8s infinite}
-.dot.off{background:#4b5563}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
-.wrap{max-width:1380px;margin:0 auto;padding:20px}
-.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px}
-@media(max-width:750px){.stats{grid-template-columns:repeat(2,1fr)}}
-.sc{background:var(--card);border:1px solid var(--b);border-radius:10px;padding:16px 20px;display:flex;align-items:center;gap:14px;transition:.2s}
-.sc:hover{border-color:#2563eb55;transform:translateY(-2px)}
-.si{font-size:30px}
-.sv{font-size:26px;font-weight:800;line-height:1}
-.sl{font-size:11px;color:var(--mu);margin-top:3px}
-.row2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
-@media(max-width:800px){.row2{grid-template-columns:1fr}}
-.card{background:var(--card);border:1px solid var(--b);border-radius:12px;overflow:hidden}
-.ch{padding:14px 18px;border-bottom:1px solid var(--b);display:flex;align-items:center;justify-content:space-between;background:rgba(37,99,235,.04)}
-.ch h2{font-size:14px;font-weight:600}
-.cb{padding:18px}
-.irow{display:flex;gap:8px;margin-bottom:12px}
-input[type=url]{flex:1;background:var(--fi);border:1px solid var(--b);border-radius:8px;padding:9px 13px;color:var(--tx);font-size:13px;outline:none;transition:.2s}
-input[type=url]:focus{border-color:var(--acc)}
-input[type=url]::placeholder{color:var(--mu)}
-.btn{padding:9px 18px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;transition:.15s;white-space:nowrap}
-.btn:active{transform:scale(.96)}
-.ba{background:var(--acc);color:#fff}.ba:hover{background:#1d4ed8}
-.bg{background:var(--grn);color:#fff}.bg:hover{background:#059669}
-.br{background:var(--red);color:#fff}.br:hover{background:#dc2626}
-.bam{background:var(--amb);color:#fff}.bam:hover{background:#d97706}
-.bsm{padding:5px 11px;font-size:11px;border-radius:6px}
-.bgh{background:var(--fi);color:var(--mu);border:1px solid var(--b)}
-.ctrlrow{display:flex;gap:8px;flex-wrap:wrap;padding-top:14px;border-top:1px solid var(--b);margin-top:14px}
-.log{background:#040710;border:1px solid var(--b);border-radius:8px;height:260px;overflow-y:auto;padding:10px 12px;font-family:'Courier New',monospace;font-size:11.5px;line-height:1.7}
-.li{color:#60a5fa}.ls{color:#34d399}.lw{color:#fbbf24}.le{color:#f87171}
-.plist{display:flex;flex-direction:column;gap:10px}
-.pc{background:var(--fi);border:1px solid var(--b);border-radius:10px;padding:14px 16px;display:flex;align-items:center;gap:14px;transition:.2s}
-.pc:hover{border-color:#2563eb33;transform:translateX(2px)}
-.pn{width:30px;height:30px;border-radius:50%;background:var(--acc);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0}
-.pi{flex:1;min-width:0}
-.pname{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ptags{display:flex;gap:10px;margin-top:5px;flex-wrap:wrap}
-.tag{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:20px;font-size:12px;font-weight:500}
-.tb{background:rgba(37,99,235,.12);color:#93c5fd;border:1px solid rgba(37,99,235,.2)}
-.tg{background:rgba(16,185,129,.12);color:#6ee7b7;border:1px solid rgba(16,185,129,.2)}
-.pt{font-size:10px;color:var(--mu);margin-top:4px}
-.empty{text-align:center;padding:40px 20px;color:var(--mu)}
-.ei{font-size:44px;margin-bottom:10px}
-.toast{position:fixed;bottom:20px;right:20px;background:#1e293b;border:1px solid var(--b);border-radius:10px;padding:12px 18px;box-shadow:0 8px 28px rgba(0,0,0,.5);font-size:13px;z-index:9999;opacity:0;transform:translateY(20px);transition:.3s;pointer-events:none;max-width:300px}
-.toast.show{opacity:1;transform:translateY(0)}
-.tok{border-left:3px solid #10b981}.terr{border-left:3px solid #ef4444}
-.tip{background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.2);border-radius:8px;padding:10px 14px;font-size:12px;color:#fbbf24;margin-bottom:12px}
-::-webkit-scrollbar{width:5px}::-webkit-scrollbar-thumb{background:#1e2a3a;border-radius:3px}
-</style>
-</head>
-<body>
-<nav>
-  <div class="brand">
-    <span style="font-size:24px">🛒</span>
-    <div><h1>Flipkart Price Alert Bot</h1><small>axios+cheerio · 15s interval · 24/7</small></div>
-  </div>
-  <div class="pill"><div class="dot" id="sdot"></div><span id="stxt">Loading…</span></div>
-</nav>
-<div class="wrap">
-  <div class="stats">
-    <div class="sc"><span class="si">📦</span><div><div class="sv" id="sP">0</div><div class="sl">Products Tracked</div></div></div>
-    <div class="sc"><span class="si">👥</span><div><div class="sv" id="sU">0</div><div class="sl">Approved Users</div></div></div>
-    <div class="sc"><span class="si">⏱</span><div><div class="sv">15s</div><div class="sl">Check Interval</div></div></div>
-    <div class="sc"><span class="si">🎯</span><div><div class="sv" id="sS">25</div><div class="sl">Slots Free</div></div></div>
-  </div>
-  <div class="row2">
-    <div class="card">
-      <div class="ch"><h2>➕ Add Flipkart Product</h2><span style="font-size:11px;color:var(--mu);background:rgba(37,99,235,.1);padding:2px 10px;border-radius:20px">Max 25</span></div>
-      <div class="cb">
-        <div class="tip">💡 Use <b>www.flipkart.com</b> product page link for best results. dl.flipkart.com links auto-resolved.</div>
-        <div class="irow">
-          <input type="url" id="purl" placeholder="Paste Flipkart product URL here…" />
-          <button class="btn ba" onclick="addProduct()">Add</button>
-        </div>
-        <div class="ctrlrow">
-          <button class="btn bg" onclick="ctrl('start')">▶ Start</button>
-          <button class="btn br" onclick="ctrl('stop')">⏹ Stop</button>
-          <button class="btn bam" onclick="ctrl('check')">🔄 Check Now</button>
-        </div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="ch"><h2>📋 Activity Log</h2><button class="btn bsm bgh" onclick="clrLog()">Clear</button></div>
-      <div class="cb" style="padding:10px"><div class="log" id="logBox"><div class="li">[System] Panel ready…</div></div></div>
-    </div>
-  </div>
-  <div class="card">
-    <div class="ch"><h2>🛍 Tracked Products</h2><button class="btn bsm bgh" onclick="loadData()">↻ Refresh</button></div>
-    <div class="cb"><div class="plist" id="plist"><div class="empty"><div class="ei">📭</div><div>No products yet. Add a Flipkart product link above!</div></div></div></div>
-  </div>
-</div>
-<div class="toast" id="toast"></div>
-<script>
-function toast(msg,type='ok'){const t=document.getElementById('toast');t.textContent=(type==='ok'?'✅ ':'❌ ')+msg;t.className='toast show t'+type;setTimeout(()=>t.className='toast',3200);}
-function log(msg,cls='li'){const b=document.getElementById('logBox');const d=document.createElement('div');d.className=cls;d.textContent='['+new Date().toLocaleTimeString('en-IN')+'] '+msg;b.appendChild(d);b.scrollTop=b.scrollHeight;}
-function clrLog(){document.getElementById('logBox').innerHTML='';}
-function fmt(n){return n?Number(n).toLocaleString('en-IN'):'N/A';}
-async function loadData(){
-  try{
-    const r=await fetch('/api/status');const d=await r.json();
-    document.getElementById('sdot').className='dot '+(d.isChecking?'on':'off');
-    document.getElementById('stxt').textContent=d.isChecking?'Checking Active':'Stopped';
-    document.getElementById('sP').textContent=d.products.length;
-    document.getElementById('sU').textContent=d.approvedUsers;
-    document.getElementById('sS').textContent=25-d.products.length;
-    renderList(d.products);
-  }catch(e){}
-}
-function renderList(ps){
-  const c=document.getElementById('plist');
-  if(!ps.length){c.innerHTML='<div class="empty"><div class="ei">📭</div><div>Add a Flipkart product link above!</div></div>';return;}
-  c.innerHTML=ps.map((p,i)=>`<div class="pc">
-    <div class="pn">${i+1}</div>
-    <div class="pi">
-      <div class="pname" title="${p.name}">${p.name}</div>
-      <div class="ptags">
-        ${(p.effectivePrice&&p.effectivePrice!==p.price)?`<span class="tag tg" title="Best price with bank offer">🏷 ₹${fmt(p.effectivePrice)} <small style="opacity:.7;font-size:10px">Best</small></span>`:''}
-        <span class="tag tb" title="Price to Buy">💰 ₹${fmt(p.price)}</span>
-        ${(p.lowestPrice&&p.lowestPrice!==p.price&&p.lowestPrice!==p.effectivePrice)?`<span class="tag" style="background:rgba(245,158,11,.12);color:#fbbf24;border:1px solid rgba(245,158,11,.2)">🏦 ₹${fmt(p.lowestPrice)}</span>`:''}
-      </div>
-      <div class="pt">Last checked: ${p.lastChecked?new Date(p.lastChecked).toLocaleString('en-IN'):'Never'}</div>
-    </div>
-    <button class="btn bsm br" onclick="del('${p.id}')">🗑</button>
-  </div>`).join('');
-}
-async function addProduct(){
-  const url=document.getElementById('purl').value.trim();
-  if(!url)return toast('Enter a URL','err');
-  if(!url.includes('flipkart.com'))return toast('Only Flipkart links!','err');
-  log('Fetching: '+url.slice(0,55)+'…');
-  try{
-    const r=await fetch('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
-    const d=await r.json();
-    if(d.success){toast(d.product.name.slice(0,35));log('✅ '+d.product.name+' | Best ₹'+fmt(d.product.effectivePrice||d.product.lowestPrice)+' | MRP ₹'+fmt(d.product.price),'ls');document.getElementById('purl').value='';loadData();}
-    else{toast(d.error||'Failed','err');log('❌ '+(d.error||'Failed'),'le');}
-  }catch(e){toast('Error','err');}
-}
-async function del(id){
-  if(!confirm('Remove?'))return;
-  const r=await fetch('/api/products/'+id,{method:'DELETE'});
-  const d=await r.json();
-  if(d.success){toast('Removed');loadData();}else toast(d.error,'err');
-}
-async function ctrl(a){
-  log('→ '+a,'lw');
-  const r=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:a})});
-  const d=await r.json();toast(d.message);log('✅ '+d.message,'ls');loadData();
-}
-loadData();setInterval(loadData,10000);
-</script>
-</body>
-</html>`;
+// NOTE: PANEL uses a regular string (single quotes) — NOT a template literal.
+// This avoids nested backtick conflicts with the renderList JS inside <script>.
+const PANEL = '<!DOCTYPE html>\n' +
+'<html lang="en">\n' +
+'<head>\n' +
+'<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">\n' +
+'<title>Flipkart Price Alert</title>\n' +
+'<style>\n' +
+'*{margin:0;padding:0;box-sizing:border-box}\n' +
+':root{--bg:#07090f;--card:#0d1117;--b:#1e2a3a;--acc:#2563eb;--grn:#10b981;--red:#ef4444;--amb:#f59e0b;--tx:#e2e8f0;--mu:#64748b;--fi:#111827}\n' +
+'body{background:var(--bg);color:var(--tx);font-family:\'Segoe UI\',system-ui,sans-serif;min-height:100vh}\n' +
+'nav{background:linear-gradient(90deg,#0f2460,#1e40af 60%,#2563eb);height:60px;display:flex;align-items:center;justify-content:space-between;padding:0 28px;box-shadow:0 2px 20px rgba(37,99,235,.5);position:sticky;top:0;z-index:100}\n' +
+'.brand{display:flex;align-items:center;gap:10px}\n' +
+'.brand h1{font-size:17px;font-weight:700;color:#fff}\n' +
+'.brand small{color:#93c5fd;font-size:11px}\n' +
+'.pill{display:flex;align-items:center;gap:7px;background:rgba(0,0,0,.35);padding:5px 14px;border-radius:20px;font-size:12px;color:#e2e8f0}\n' +
+'.dot{width:8px;height:8px;border-radius:50%}\n' +
+'.dot.on{background:#10b981;box-shadow:0 0 0 3px rgba(16,185,129,.25);animation:blink 1.8s infinite}\n' +
+'.dot.off{background:#4b5563}\n' +
+'@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}\n' +
+'.wrap{max-width:1380px;margin:0 auto;padding:20px}\n' +
+'.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px}\n' +
+'@media(max-width:750px){.stats{grid-template-columns:repeat(2,1fr)}}\n' +
+'.sc{background:var(--card);border:1px solid var(--b);border-radius:10px;padding:16px 20px;display:flex;align-items:center;gap:14px;transition:.2s}\n' +
+'.sc:hover{border-color:#2563eb55;transform:translateY(-2px)}\n' +
+'.si{font-size:30px}\n' +
+'.sv{font-size:26px;font-weight:800;line-height:1}\n' +
+'.sl{font-size:11px;color:var(--mu);margin-top:3px}\n' +
+'.row2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}\n' +
+'@media(max-width:800px){.row2{grid-template-columns:1fr}}\n' +
+'.card{background:var(--card);border:1px solid var(--b);border-radius:12px;overflow:hidden}\n' +
+'.ch{padding:14px 18px;border-bottom:1px solid var(--b);display:flex;align-items:center;justify-content:space-between;background:rgba(37,99,235,.04)}\n' +
+'.ch h2{font-size:14px;font-weight:600}\n' +
+'.cb{padding:18px}\n' +
+'.irow{display:flex;gap:8px;margin-bottom:12px}\n' +
+'input[type=url]{flex:1;background:var(--fi);border:1px solid var(--b);border-radius:8px;padding:9px 13px;color:var(--tx);font-size:13px;outline:none;transition:.2s}\n' +
+'input[type=url]:focus{border-color:var(--acc)}\n' +
+'input[type=url]::placeholder{color:var(--mu)}\n' +
+'.btn{padding:9px 18px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;transition:.15s;white-space:nowrap}\n' +
+'.btn:active{transform:scale(.96)}\n' +
+'.ba{background:var(--acc);color:#fff}.ba:hover{background:#1d4ed8}\n' +
+'.bg{background:var(--grn);color:#fff}.bg:hover{background:#059669}\n' +
+'.br{background:var(--red);color:#fff}.br:hover{background:#dc2626}\n' +
+'.bam{background:var(--amb);color:#fff}.bam:hover{background:#d97706}\n' +
+'.bsm{padding:5px 11px;font-size:11px;border-radius:6px}\n' +
+'.bgh{background:var(--fi);color:var(--mu);border:1px solid var(--b)}\n' +
+'.ctrlrow{display:flex;gap:8px;flex-wrap:wrap;padding-top:14px;border-top:1px solid var(--b);margin-top:14px}\n' +
+'.log{background:#040710;border:1px solid var(--b);border-radius:8px;height:260px;overflow-y:auto;padding:10px 12px;font-family:\'Courier New\',monospace;font-size:11.5px;line-height:1.7}\n' +
+'.li{color:#60a5fa}.ls{color:#34d399}.lw{color:#fbbf24}.le{color:#f87171}\n' +
+'.plist{display:flex;flex-direction:column;gap:10px}\n' +
+'.pc{background:var(--fi);border:1px solid var(--b);border-radius:10px;padding:14px 16px;display:flex;align-items:center;gap:14px;transition:.2s}\n' +
+'.pc:hover{border-color:#2563eb33;transform:translateX(2px)}\n' +
+'.pn{width:30px;height:30px;border-radius:50%;background:var(--acc);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0}\n' +
+'.pi{flex:1;min-width:0}\n' +
+'.pname{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}\n' +
+'.ptags{display:flex;gap:10px;margin-top:5px;flex-wrap:wrap}\n' +
+'.tag{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:20px;font-size:12px;font-weight:500}\n' +
+'.tb{background:rgba(37,99,235,.12);color:#93c5fd;border:1px solid rgba(37,99,235,.2)}\n' +
+'.tg{background:rgba(16,185,129,.12);color:#6ee7b7;border:1px solid rgba(16,185,129,.2)}\n' +
+'.pt{font-size:10px;color:var(--mu);margin-top:4px}\n' +
+'.empty{text-align:center;padding:40px 20px;color:var(--mu)}\n' +
+'.ei{font-size:44px;margin-bottom:10px}\n' +
+'.toast{position:fixed;bottom:20px;right:20px;background:#1e293b;border:1px solid var(--b);border-radius:10px;padding:12px 18px;box-shadow:0 8px 28px rgba(0,0,0,.5);font-size:13px;z-index:9999;opacity:0;transform:translateY(20px);transition:.3s;pointer-events:none;max-width:300px}\n' +
+'.toast.show{opacity:1;transform:translateY(0)}\n' +
+'.tok{border-left:3px solid #10b981}.terr{border-left:3px solid #ef4444}\n' +
+'.tip{background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.2);border-radius:8px;padding:10px 14px;font-size:12px;color:#fbbf24;margin-bottom:12px}\n' +
+'::-webkit-scrollbar{width:5px}::-webkit-scrollbar-thumb{background:#1e2a3a;border-radius:3px}\n' +
+'</style>\n' +
+'</head>\n' +
+'<body>\n' +
+'<nav>\n' +
+'  <div class="brand">\n' +
+'    <span style="font-size:24px">&#128722;</span>\n' +
+'    <div><h1>Flipkart Price Alert Bot</h1><small>axios+cheerio &middot; 15s interval &middot; 24/7</small></div>\n' +
+'  </div>\n' +
+'  <div class="pill"><div class="dot" id="sdot"></div><span id="stxt">Loading&hellip;</span></div>\n' +
+'</nav>\n' +
+'<div class="wrap">\n' +
+'  <div class="stats">\n' +
+'    <div class="sc"><span class="si">&#128230;</span><div><div class="sv" id="sP">0</div><div class="sl">Products Tracked</div></div></div>\n' +
+'    <div class="sc"><span class="si">&#128101;</span><div><div class="sv" id="sU">0</div><div class="sl">Approved Users</div></div></div>\n' +
+'    <div class="sc"><span class="si">&#9201;</span><div><div class="sv">15s</div><div class="sl">Check Interval</div></div></div>\n' +
+'    <div class="sc"><span class="si">&#127919;</span><div><div class="sv" id="sS">25</div><div class="sl">Slots Free</div></div></div>\n' +
+'  </div>\n' +
+'  <div class="row2">\n' +
+'    <div class="card">\n' +
+'      <div class="ch"><h2>&#10133; Add Flipkart Product</h2><span style="font-size:11px;color:var(--mu);background:rgba(37,99,235,.1);padding:2px 10px;border-radius:20px">Max 25</span></div>\n' +
+'      <div class="cb">\n' +
+'        <div class="tip">&#128161; Use <b>www.flipkart.com</b> product page link for best results.</div>\n' +
+'        <div class="irow">\n' +
+'          <input type="url" id="purl" placeholder="Paste Flipkart product URL here&hellip;" />\n' +
+'          <button class="btn ba" onclick="addProduct()">Add</button>\n' +
+'        </div>\n' +
+'        <div class="ctrlrow">\n' +
+'          <button class="btn bg" onclick="ctrl(\'start\')">&#9654; Start</button>\n' +
+'          <button class="btn br" onclick="ctrl(\'stop\')">&#9209; Stop</button>\n' +
+'          <button class="btn bam" onclick="ctrl(\'check\')">&#128260; Check Now</button>\n' +
+'        </div>\n' +
+'      </div>\n' +
+'    </div>\n' +
+'    <div class="card">\n' +
+'      <div class="ch"><h2>&#128203; Activity Log</h2><button class="btn bsm bgh" onclick="clrLog()">Clear</button></div>\n' +
+'      <div class="cb" style="padding:10px"><div class="log" id="logBox"><div class="li">[System] Panel ready&hellip;</div></div></div>\n' +
+'    </div>\n' +
+'  </div>\n' +
+'  <div class="card">\n' +
+'    <div class="ch"><h2>&#128717; Tracked Products</h2><button class="btn bsm bgh" onclick="loadData()">&#8635; Refresh</button></div>\n' +
+'    <div class="cb"><div class="plist" id="plist"><div class="empty"><div class="ei">&#128205;</div><div>No products yet. Add a Flipkart product link above!</div></div></div></div>\n' +
+'  </div>\n' +
+'</div>\n' +
+'<div class="toast" id="toast"></div>\n' +
+'<script>\n' +
+'function toast(msg,type){\n' +
+'  type=type||"ok";\n' +
+'  var t=document.getElementById("toast");\n' +
+'  t.textContent=(type==="ok"?"✅ ":"❌ ")+msg;\n' +
+'  t.className="toast show t"+type;\n' +
+'  setTimeout(function(){t.className="toast";},3200);\n' +
+'}\n' +
+'function log(msg,cls){\n' +
+'  cls=cls||"li";\n' +
+'  var b=document.getElementById("logBox");\n' +
+'  var d=document.createElement("div");\n' +
+'  d.className=cls;\n' +
+'  d.textContent="["+new Date().toLocaleTimeString("en-IN")+"] "+msg;\n' +
+'  b.appendChild(d);\n' +
+'  b.scrollTop=b.scrollHeight;\n' +
+'}\n' +
+'function clrLog(){document.getElementById("logBox").innerHTML="";}\n' +
+'function fmt(n){return n?Number(n).toLocaleString("en-IN"):"N/A";}\n' +
+'\n' +
+'function renderList(ps){\n' +
+'  var c=document.getElementById("plist");\n' +
+'  if(!ps.length){\n' +
+'    c.innerHTML=\'<div class="empty"><div class="ei">&#128205;</div><div>Add a Flipkart product link above!</div></div>\';\n' +
+'    return;\n' +
+'  }\n' +
+'  var html="";\n' +
+'  for(var i=0;i<ps.length;i++){\n' +
+'    var p=ps[i];\n' +
+'    var bestTag="";\n' +
+'    if(p.effectivePrice && p.effectivePrice!==p.price){\n' +
+'      bestTag=\'<span class="tag tg" title="Best price with bank offer">🏷 ₹\'+fmt(p.effectivePrice)+\' <small style="opacity:.7;font-size:10px">Best</small></span>\';\n' +
+'    }\n' +
+'    var lowestTag="";\n' +
+'    if(p.lowestPrice && p.lowestPrice!==p.price && p.lowestPrice!==p.effectivePrice){\n' +
+'      lowestTag=\'<span class="tag" style="background:rgba(245,158,11,.12);color:#fbbf24;border:1px solid rgba(245,158,11,.2)">🏦 ₹\'+fmt(p.lowestPrice)+\'</span>\';\n' +
+'    }\n' +
+'    var lastChk=p.lastChecked?new Date(p.lastChecked).toLocaleString("en-IN"):"Never";\n' +
+'    html+=\'<div class="pc">\';\n' +
+'    html+=\'<div class="pn">\'+(i+1)+\'</div>\';\n' +
+'    html+=\'<div class="pi">\';\n' +
+'    html+=\'<div class="pname" title="\'+p.name+\'">\'+p.name+\'</div>\';\n' +
+'    html+=\'<div class="ptags">\'+bestTag+\'<span class="tag tb" title="Price to Buy">💰 ₹\'+fmt(p.price)+\'</span>\'+lowestTag+\'</div>\';\n' +
+'    html+=\'<div class="pt">Last checked: \'+lastChk+\'</div>\';\n' +
+'    html+=\'</div>\';\n' +
+'    html+=\'<button class="btn bsm br" onclick="del(\\\'\'+(p.id)+\'\\\')">🗑</button>\';\n' +
+'    html+=\'</div>\';\n' +
+'  }\n' +
+'  c.innerHTML=html;\n' +
+'}\n' +
+'\n' +
+'async function loadData(){\n' +
+'  try{\n' +
+'    var r=await fetch("/api/status");\n' +
+'    var d=await r.json();\n' +
+'    document.getElementById("sdot").className="dot "+(d.isChecking?"on":"off");\n' +
+'    document.getElementById("stxt").textContent=d.isChecking?"Checking Active":"Stopped";\n' +
+'    document.getElementById("sP").textContent=d.products.length;\n' +
+'    document.getElementById("sU").textContent=d.approvedUsers;\n' +
+'    document.getElementById("sS").textContent=25-d.products.length;\n' +
+'    renderList(d.products);\n' +
+'  }catch(e){}\n' +
+'}\n' +
+'\n' +
+'async function addProduct(){\n' +
+'  var url=document.getElementById("purl").value.trim();\n' +
+'  if(!url)return toast("Enter a URL","err");\n' +
+'  if(!url.includes("flipkart.com"))return toast("Only Flipkart links!","err");\n' +
+'  log("Fetching: "+url.slice(0,55)+"…");\n' +
+'  try{\n' +
+'    var r=await fetch("/api/products",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:url})});\n' +
+'    var d=await r.json();\n' +
+'    if(d.success){\n' +
+'      toast(d.product.name.slice(0,35));\n' +
+'      log("✅ "+d.product.name+" | Best ₹"+fmt(d.product.effectivePrice||d.product.lowestPrice)+" | MRP ₹"+fmt(d.product.price),"ls");\n' +
+'      document.getElementById("purl").value="";\n' +
+'      loadData();\n' +
+'    }else{\n' +
+'      toast(d.error||"Failed","err");\n' +
+'      log("❌ "+(d.error||"Failed"),"le");\n' +
+'    }\n' +
+'  }catch(e){toast("Error","err");}\n' +
+'}\n' +
+'\n' +
+'async function del(id){\n' +
+'  if(!confirm("Remove this product?"))return;\n' +
+'  var r=await fetch("/api/products/"+id,{method:"DELETE"});\n' +
+'  var d=await r.json();\n' +
+'  if(d.success){toast("Removed");loadData();}else toast(d.error,"err");\n' +
+'}\n' +
+'\n' +
+'async function ctrl(a){\n' +
+'  log("→ "+a,"lw");\n' +
+'  var r=await fetch("/api/control",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:a})});\n' +
+'  var d=await r.json();\n' +
+'  toast(d.message);\n' +
+'  log("✅ "+d.message,"ls");\n' +
+'  loadData();\n' +
+'}\n' +
+'\n' +
+'loadData();\n' +
+'setInterval(loadData,10000);\n' +
+'</script>\n' +
+'</body>\n' +
+'</html>';
 
+// ─── API ROUTES ───────────────────────────────────────────────────────────────
 app.get('/', (_, res) => res.send(PANEL));
 app.get('/ping', (_, res) => res.json({ ok: true, ts: Date.now() }));
 
