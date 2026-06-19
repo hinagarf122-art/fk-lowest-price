@@ -4,6 +4,7 @@
   "description": "24/7 Flipkart Price Alert Bot with Telegram + Web Panel",
   "main": "bot.js",
   "scripts": {
+    "postinstall": "npx puppeteer browsers install chrome",
     "start": "node bot.js"
   },
   "engines": {
