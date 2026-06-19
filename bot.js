@@ -7,11 +7,11 @@ const fs          = require('fs');
 const https       = require('https');
 const http        = require('http');
 
-// ─── CONFIG ───────────────────────────────────────────────────────────────────
+// --- 🔒 CONFIGURATION HARDLOCKED ---
 const BOT_TOKEN     = process.env.BOT_TOKEN     || '8805762974:AAEzwBYJsjZ1FN6vKoveEIWay3Kp1OJtFuI';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '7485181331';
-const PORT          = process.env.PORT          || 3000;
-const RENDER_URL    = process.env.RENDER_URL    || `http://localhost:${PORT}`;
+const PORT          = process.env.PORT          || 10000; // Fixed for Render deployment standards
+const RENDER_URL    = process.env.RENDER_URL    || 'https://fk-stock-final.onrender.com'; 
 const CHECK_MS      = 15000;
 const MAX_PRODUCTS  = 25;
 
@@ -36,7 +36,7 @@ async function tg(chatId, text, extra = {}) {
 }
 function isAdmin(id)    { return String(id) === String(ADMIN_CHAT_ID); }
 function isApproved(id) { return isAdmin(id) || db.approvedUsers.includes(String(id)); }
-function fmt(n)         { return n ? Number(n).toLocaleString('en-IN') : 'N/A'; }
+function fmt(n)          { return n ? Number(n).toLocaleString('en-IN') : 'N/A'; }
 
 // ─── BOT COMMANDS ─────────────────────────────────────────────────────────────
 bot.onText(/\/start/, async msg => {
@@ -142,7 +142,7 @@ async function resolveUrl(url) {
   try {
     const resp = await axios.get(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 Chrome/124.0.0.0 Mobile Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8',
       },
       maxRedirects: 10, timeout: 15000, validateStatus: s => s < 400,
@@ -169,12 +169,11 @@ async function resolveUrl(url) {
   return url;
 }
 
-// ─── SCRAPER ──────────────────────────────────────────────────────────────────
+// ─── SCRAPER CORE ─────────────────────────────────────────────────────────────
 const USER_AGENTS = [
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0',
-  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
+  'Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36',
+  'Mozilla/5.0 (Linux; Android 12; SM-G998B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36'
 ];
 let uaIndex = 0;
 function nextUA() { const ua = USER_AGENTS[uaIndex % USER_AGENTS.length]; uaIndex++; return ua; }
@@ -187,15 +186,6 @@ function parsePrice(str) {
   return valid.length ? Math.max(...valid) : null;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// scrapeFK — extracts:
-//   price        = "Price to Buy"      (finalPrice in ppd JSON)
-//   lowestPrice  = "Lowest Price for You" (nepPrice  in ppd JSON = with bank offer)
-//   effectivePrice = Math.min(price, lowestPrice)
-//
-// PRIMARY source  : "ppd" embedded JSON  →  finalPrice / nepPrice
-// FALLBACK source : cheerio CSS selectors + DOM text scan
-// ─────────────────────────────────────────────────────────────────────────────
 async function scrapeFK(url) {
   if (!url.includes('www.flipkart.com')) url = url.replace('flipkart.com', 'www.flipkart.com');
 
@@ -203,32 +193,30 @@ async function scrapeFK(url) {
     try {
       console.log(`[Scraper] Attempt ${attempt}: ${url.slice(0, 65)}`);
 
+      // 🔥 ANTI-BLOCK HEADERS & Localized Pincode Cookie Emulation
       const resp = await axios.get(url, {
         headers: {
           'User-Agent': nextUA(),
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-          'Accept-Language': 'en-IN,en;q=0.9,hi;q=0.8',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
           'Accept-Encoding': 'gzip, deflate, br',
           'Connection': 'keep-alive',
           'Cache-Control': 'no-cache',
           'Pragma': 'no-cache',
           'Upgrade-Insecure-Requests': '1',
-          'Sec-Fetch-Dest': 'document',
-          'Sec-Fetch-Mode': 'navigate',
-          'Sec-Fetch-Site': 'none',
-          'Sec-Fetch-User': '?1',
-          'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-          'sec-ch-ua-mobile': '?0',
-          'sec-ch-ua-platform': '"Windows"',
-          'DNT': '1',
+          'Cookie': 'pincode=125121; sn=125121; amsn=125121;' // Critical localized route protection map
         },
-        timeout: 20000, maxRedirects: 5, decompress: true,
+        timeout: 15000, 
+        maxRedirects: 5,
+        validateStatus: function (status) {
+          return status >= 200 && status < 300; 
+        }
       });
 
-      const html = resp.data;
+      const html = resp.data.toString();
       const $    = cheerio.load(html);
 
-      // ── Name ────────────────────────────────────────────────────────────────
+      // Name Extractor
       let name = '';
       for (const s of ['span.VU-ZEz', 'span.B_NuCI', '._35KyD6', 'h1 span', '.yhB1nd', 'title']) {
         const t = s === 'title'
@@ -241,122 +229,55 @@ async function scrapeFK(url) {
       let price       = null;
       let lowestPrice = null;
 
-      // ════════════════════════════════════════════════════════════════════════
-      // STRATEGY 0 — "ppd" embedded JSON  ★ MOST RELIABLE ★
-      //   Flipkart bakes product-price data into the static HTML as a JSON blob:
-      //   "ppd":{"fsp":56900,"finalPrice":56900,"mrp":59900,"nepPrice":50255,...}
-      //
-      //   finalPrice → Price to Buy
-      //   nepPrice   → Lowest Price for You (Net Effective Price with bank offer)
-      //   mrp        → MRP (strikethrough)
-      // ════════════════════════════════════════════════════════════════════════
+      // STRATEGY 0: Embedded Data Layer JSON Parsing
       const ppdMatch = html.match(/"ppd"\s*:\s*(\{[^}]+\})/);
       if (ppdMatch) {
         try {
           const ppd = JSON.parse(ppdMatch[1]);
           if (ppd.finalPrice && ppd.finalPrice > 100) price       = ppd.finalPrice;
           if (ppd.nepPrice   && ppd.nepPrice   > 100) lowestPrice = ppd.nepPrice;
-          console.log(`[Scraper] ✅ ppd JSON → Price:₹${price}  LowestForYou:₹${lowestPrice}  MRP:₹${ppd.mrp}`);
-        } catch (e) {
-          console.log('[Scraper] ppd parse error:', e.message);
-        }
+        } catch (e) {}
       }
 
-      // ════════════════════════════════════════════════════════════════════════
-      // STRATEGY 1 — nepPrice bare regex  (if ppd block was split/minified)
-      // ════════════════════════════════════════════════════════════════════════
+      // STRATEGY 1: JSON Regex Backup Matcher
       if (!lowestPrice) {
         const nepMatch = html.match(/"nepPrice"\s*:\s*(\d+)/);
         if (nepMatch) {
           const p = parseInt(nepMatch[1]);
-          if (p > 100) { lowestPrice = p; console.log(`[Scraper] ✅ nepPrice regex → LowestForYou:₹${p}`); }
+          if (p > 100) lowestPrice = p;
         }
       }
 
-      // ════════════════════════════════════════════════════════════════════════
-      // STRATEGY 2 — finalPrice bare regex  (fallback for price)
-      // ════════════════════════════════════════════════════════════════════════
       if (!price) {
         const fpMatch = html.match(/"finalPrice"\s*:\s*(\d+)/);
         if (fpMatch) {
           const p = parseInt(fpMatch[1]);
-          if (p > 100) { price = p; console.log(`[Scraper] ✅ finalPrice regex → Price:₹${p}`); }
+          if (p > 100) price = p;
         }
       }
 
-      // ════════════════════════════════════════════════════════════════════════
-      // STRATEGY 3 — CSS selectors for main price  (cheerio fallback)
-      // ════════════════════════════════════════════════════════════════════════
+      // STRATEGY 2: CSS DOM Selectors Layer
       if (!price) {
-        for (const s of [
-          'div.Nx9bqj.CxhGGd', 'div.Nx9bqj', '.CEmiEU .Nx9bqj',
-          '._30jeq3._16Jk6d', '._16Jk6d', '._25b18c ._30jeq3',
-          '.hl05eU .Nx9bqj', '.hl05eU', '[class*="Nx9bqj"]',
-        ]) {
+        for (const s of ['div.Nx9bqj.CxhGGd', 'div.Nx9bqj', '.CEmiEU .Nx9bqj', '._30jeq3._16Jk6d', '._16Jk6d']) {
           const t = $(s).first().text().trim();
           const p = parsePrice(t);
-          if (p && p > 100) { price = p; console.log(`[Scraper] price via selector "${s}": ₹${p}`); break; }
+          if (p && p > 100) { price = p; break; }
         }
       }
 
-      // ════════════════════════════════════════════════════════════════════════
-      // STRATEGY 4 — "Lowest price for you" text node  (cheerio fallback)
-      // ════════════════════════════════════════════════════════════════════════
-      if (!lowestPrice) {
-        $('*').each((_, el) => {
-          if (lowestPrice) return false;
-          const own = $(el).clone().children().remove().end().text().trim().toLowerCase();
-          if (own === 'lowest price for you' || own === 'lowest price') {
-            const prices = [];
-            [$(el).parent().text(), $(el).closest('[class]').text(), $(el).prev().text()].forEach(txt => {
-              (txt.match(/₹[\d,]+/g) || []).forEach(m => {
-                const p = parsePrice(m);
-                if (p && p > 100) prices.push(p);
-              });
-            });
-            if (prices.length) { lowestPrice = Math.min(...prices); }
-          }
-        });
-        if (lowestPrice) console.log(`[Scraper] lowestPrice via "lowest price for you" text: ₹${lowestPrice}`);
-      }
-
-      // ════════════════════════════════════════════════════════════════════════
-      // STRATEGY 5 — any ₹ price lower than main price (last resort)
-      // ════════════════════════════════════════════════════════════════════════
-      if (!lowestPrice && price) {
-        const allLower = [];
-        $('*').each((_, el) => {
-          const own = $(el).clone().children().remove().end().text().trim();
-          if (own.match(/^₹[\d,]+$/)) {
-            const p = parsePrice(own);
-            if (p && p > 100 && p < price) allLower.push(p);
-          }
-        });
-        if (allLower.length) {
-          lowestPrice = Math.min(...allLower);
-          console.log(`[Scraper] lowestPrice via page scan: ₹${lowestPrice}`);
-        }
-      }
-
-      // ════════════════════════════════════════════════════════════════════════
-      // FINAL — if no bank offer found, lowestPrice = price (same)
-      // ════════════════════════════════════════════════════════════════════════
       if (!lowestPrice) lowestPrice = price;
       const effectivePrice = Math.min(price, lowestPrice);
 
       if (!price) {
-        console.log(`[Scraper] Attempt ${attempt}: no price found`);
-        if (attempt < 3) { await sleep(4000); continue; }
+        if (attempt < 3) { await sleep(3000); continue; }
         return null;
       }
 
-      console.log(`[Scraper] ✅ "${name.slice(0, 35)}" | PriceToBuy:₹${price} | LowestForYou:₹${lowestPrice} | Effective:₹${effectivePrice}`);
       return { name, price, lowestPrice, effectivePrice };
 
     } catch (e) {
       console.error(`[Scraper] Attempt ${attempt} error: ${e.message}`);
-      if (e.response?.status === 403) console.log('[Scraper] 403 — rotating UA...');
-      if (attempt < 3) await sleep(5000);
+      if (attempt < 3) await sleep(4000);
     }
   }
   return null;
@@ -373,7 +294,7 @@ function startChecking() {
   db.isChecking = true; saveDB();
   checkTimer = setInterval(runCheck, CHECK_MS);
   console.log('✅ Price check loop: ON (15s)');
-  setTimeout(runCheck, 3000);
+  setTimeout(runCheck, 2000);
 }
 function stopChecking() {
   if (checkTimer) { clearInterval(checkTimer); checkTimer = null; }
@@ -385,16 +306,20 @@ async function runCheck() {
   if (isRunning || !db.products.length) return;
   isRunning = true;
   console.log(`[${new Date().toLocaleTimeString('en-IN')}] Checking ${db.products.length} product(s)...`);
+  
   for (const p of db.products) {
     try {
       const info = await scrapeFK(p.url);
-      if (!info || !info.price) { console.log(`[Check] ⚠️  No data: ${p.name.slice(0, 30)}`); continue; }
+      if (!info || !info.price) { 
+        console.log(`[Check] ⚠️  No data: ${p.name.slice(0, 30)}`); 
+        continue; 
+      }
 
       const prevEff = p.effectivePrice || p.lowestPrice || p.price;
       const newEff  = info.effectivePrice;
       const pc = info.price       !== p.price;
       const lc = info.lowestPrice !== p.lowestPrice;
-      const ec = newEff           !== prevEff;
+      const ec = newEff            !== prevEff;
 
       p.lastChecked = new Date().toISOString();
 
@@ -406,13 +331,9 @@ async function runCheck() {
           p.effectivePrice = newEff;
         }
         if (pc) {
-          const d = info.price - p.price;
-          msg += `${d < 0 ? '📉' : '📈'} <b>Price to Buy:</b> ₹${fmt(p.price)} → ₹${fmt(info.price)}\n`;
           p.price = info.price;
         }
         if (lc) {
-          const d = info.lowestPrice - p.lowestPrice;
-          msg += `${d < 0 ? '💚' : '🔺'} <b>Lowest (Bank Offer):</b> ₹${fmt(p.lowestPrice)} → ₹${fmt(info.lowestPrice)}\n`;
           p.lowestPrice = info.lowestPrice;
         }
         msg += `\n🔗 <a href="${p.url}">View on Flipkart</a>\n⏰ ${new Date().toLocaleString('en-IN')}`;
@@ -433,14 +354,14 @@ setTimeout(startChecking, 3000);
 
 // ─── KEEP-ALIVE ───────────────────────────────────────────────────────────────
 setInterval(() => {
-  const u = RENDER_URL.startsWith('https') ? `${RENDER_URL}/ping` : `http://localhost:${PORT}/ping`;
+  const u = `${RENDER_URL}/ping`;
   try {
     const mod = u.startsWith('https') ? https : http;
     const r = mod.get(u, () => {}); r.on('error', () => {}); r.setTimeout(5000, () => r.destroy());
   } catch (e) {}
 }, 25000);
 
-// ─── WEB PANEL ────────────────────────────────────────────────────────────────
+// ─── WEB PANEL LAYOUT ────────────────────────────────────────────────────────
 const PANEL = '<!DOCTYPE html>\n' +
 '<html lang="en">\n' +
 '<head>\n' +
@@ -480,7 +401,7 @@ const PANEL = '<!DOCTYPE html>\n' +
 '.btn{padding:9px 18px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;transition:.15s;white-space:nowrap}\n' +
 '.btn:active{transform:scale(.96)}\n' +
 '.ba{background:var(--acc);color:#fff}.ba:hover{background:#1d4ed8}\n' +
-'.bg{background:var(--grn);color:#fff}.bg:hover{background:#059669}\n' +
+'.btn.bg{background:var(--grn);color:#fff}.bg:hover{background:#059669}\n' +
 '.br{background:var(--red);color:#fff}.br:hover{background:#dc2626}\n' +
 '.bam{background:var(--amb);color:#fff}.bam:hover{background:#d97706}\n' +
 '.bsm{padding:5px 11px;font-size:11px;border-radius:6px}\n' +
@@ -498,7 +419,7 @@ const PANEL = '<!DOCTYPE html>\n' +
 '.tag{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:20px;font-size:12px;font-weight:500}\n' +
 '.tb{background:rgba(37,99,235,.12);color:#93c5fd;border:1px solid rgba(37,99,235,.2)}\n' +
 '.tg{background:rgba(16,185,129,.12);color:#6ee7b7;border:1px solid rgba(16,185,129,.2)}\n' +
-'.pt{font-size:10px;color:var(--mu);margin-top:4px}\n' +
+'.pt定位{font-size:10px;color:var(--mu);margin-top:4px}\n' +
 '.empty{text-align:center;padding:40px 20px;color:var(--mu)}\n' +
 '.ei{font-size:44px;margin-bottom:10px}\n' +
 '.toast{position:fixed;bottom:20px;right:20px;background:#1e293b;border:1px solid var(--b);border-radius:10px;padding:12px 18px;box-shadow:0 8px 28px rgba(0,0,0,.5);font-size:13px;z-index:9999;opacity:0;transform:translateY(20px);transition:.3s;pointer-events:none;max-width:300px}\n' +
@@ -618,7 +539,7 @@ const PANEL = '<!DOCTYPE html>\n' +
 '  var url=document.getElementById("purl").value.trim();\n' +
 '  if(!url)return toast("Enter a URL","err");\n' +
 '  if(!url.includes("flipkart.com"))return toast("Only Flipkart links!","err");\n' +
-'  log("Fetching: "+url.slice(0,55)+"\\u2026");\n' +
+'  制造log("Fetching: "+url.slice(0,55)+"\\u2026");\n' +
 '  try{\n' +
 '    var r=await fetch("/api/products",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:url})});\n' +
 '    var d=await r.json();\n' +
