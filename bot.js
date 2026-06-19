@@ -8,9 +8,9 @@ const https       = require('https');
 const http        = require('http');
 
 // --- 🔒 CONFIGURATION HARDLOCKED ---
-const BOT_TOKEN     = process.env.BOT_TOKEN     || '8805762974:AAF1MiTNy9HffCv1AXDGP2QIHWSxlmrW1RU'; // 🔥 New Token Loaded
+const BOT_TOKEN     = process.env.BOT_TOKEN     || '8805762974:AAF1MiTNy9HffCv1AXDGP2QIHWSxlmrW1RU';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '7485181331';
-const PORT          = process.env.PORT          || 10000; 
+const PORT          = process.env.PORT          || 10000; // Fixed for Render deployment standards
 const RENDER_URL    = process.env.RENDER_URL    || 'https://fk-stock-final.onrender.com'; 
 const CHECK_MS      = 15000;
 const MAX_PRODUCTS  = 25;
@@ -193,6 +193,7 @@ async function scrapeFK(url) {
     try {
       console.log(`[Scraper] Attempt ${attempt}: ${url.slice(0, 65)}`);
 
+      // 🔥 ANTI-BLOCK HEADERS & Localized Pincode Cookie Emulation
       const resp = await axios.get(url, {
         headers: {
           'User-Agent': nextUA(),
@@ -203,16 +204,19 @@ async function scrapeFK(url) {
           'Cache-Control': 'no-cache',
           'Pragma': 'no-cache',
           'Upgrade-Insecure-Requests': '1',
-          'Cookie': 'pincode=125121; sn=125121; amsn=125121;' 
+          'Cookie': 'pincode=125121; sn=125121; amsn=125121;' // Critical localized route protection map
         },
         timeout: 15000, 
         maxRedirects: 5,
-        validateStatus: function (status) { return status >= 200 && status < 300; }
+        validateStatus: function (status) {
+          return status >= 200 && status < 300; 
+        }
       });
 
       const html = resp.data.toString();
       const $    = cheerio.load(html);
 
+      // Name Extractor
       let name = '';
       for (const s of ['span.VU-ZEz', 'span.B_NuCI', '._35KyD6', 'h1 span', '.yhB1nd', 'title']) {
         const t = s === 'title'
@@ -225,6 +229,7 @@ async function scrapeFK(url) {
       let price       = null;
       let lowestPrice = null;
 
+      // STRATEGY 0: Embedded Data Layer JSON Parsing
       const ppdMatch = html.match(/"ppd"\s*:\s*(\{[^}]+\})/);
       if (ppdMatch) {
         try {
@@ -234,6 +239,7 @@ async function scrapeFK(url) {
         } catch (e) {}
       }
 
+      // STRATEGY 1: JSON Regex Backup Matcher
       if (!lowestPrice) {
         const nepMatch = html.match(/"nepPrice"\s*:\s*(\d+)/);
         if (nepMatch) {
@@ -250,6 +256,7 @@ async function scrapeFK(url) {
         }
       }
 
+      // STRATEGY 2: CSS DOM Selectors Layer
       if (!price) {
         for (const s of ['div.Nx9bqj.CxhGGd', 'div.Nx9bqj', '.CEmiEU .Nx9bqj', '._30jeq3._16Jk6d', '._16Jk6d']) {
           const t = $(s).first().text().trim();
@@ -298,11 +305,15 @@ function stopChecking() {
 async function runCheck() {
   if (isRunning || !db.products.length) return;
   isRunning = true;
+  console.log(`[${new Date().toLocaleTimeString('en-IN')}] Checking ${db.products.length} product(s)...`);
   
   for (const p of db.products) {
     try {
       const info = await scrapeFK(p.url);
-      if (!info || !info.price) { continue; } // 🔥 Silently skipped out of logs to protect space
+      if (!info || !info.price) { 
+        console.log(`[Check] ⚠️  No data: ${p.name.slice(0, 30)}`); 
+        continue; 
+      }
 
       const prevEff = p.effectivePrice || p.lowestPrice || p.price;
       const newEff  = info.effectivePrice;
@@ -319,16 +330,20 @@ async function runCheck() {
           msg += `${d < 0 ? '🎉📉' : '📈'} <b>Best Price for You:</b>\n  Was: ₹${fmt(prevEff)}\n  Now: ₹${fmt(newEff)}\n  <b>${d < 0 ? '▼ DROPPED ₹' : '▲ UP ₹'}${fmt(Math.abs(d))}</b>\n\n`;
           p.effectivePrice = newEff;
         }
-        if (pc) p.price = info.price;
-        if (lc) p.lowestPrice = info.lowestPrice;
-        
+        if (pc) {
+          p.price = info.price;
+        }
+        if (lc) {
+          p.lowestPrice = info.lowestPrice;
+        }
         msg += `\n🔗 <a href="${p.url}">View on Flipkart</a>\n⏰ ${new Date().toLocaleString('en-IN')}`;
         saveDB();
         const targets = [...new Set([ADMIN_CHAT_ID, ...db.approvedUsers])];
         for (const uid of targets) await tg(uid, msg);
         console.log(`[Alert] 🔔 Sent: ${p.name.slice(0, 30)}`);
       } else {
-        saveDB(); // 🔥 "No change" log successfully deleted from terminal line matrix
+        console.log(`[Check] ✅ No change: ${p.name.slice(0, 30)} | Buy:₹${info.price} | LowestForYou:₹${info.lowestPrice}`);
+        saveDB();
       }
     } catch (e) { console.error('[Check] Error:', e.message); }
   }
@@ -524,6 +539,7 @@ const PANEL = '<!DOCTYPE html>\n' +
 '  var url=document.getElementById("purl").value.trim();\n' +
 '  if(!url)return toast("Enter a URL","err");\n' +
 '  if(!url.includes("flipkart.com"))return toast("Only Flipkart links!","err");\n' +
+'  制造log("Fetching: "+url.slice(0,55)+"\\u2026");\n' +
 '  try{\n' +
 '    var r=await fetch("/api/products",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:url})});\n' +
 '    var d=await r.json();\n' +
