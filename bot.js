@@ -149,10 +149,8 @@ async function resolveUrl(url) {
       timeout: 15000,
       validateStatus: s => s < 400,
     });
-    // axios gives final URL after redirects
     const finalUrl = resp.request?.res?.responseUrl || resp.config?.url || url;
     if (finalUrl && finalUrl.includes('flipkart.com') && !finalUrl.includes('dl.flipkart.com')) {
-      // Clean tracking params, keep only essential
       try {
         const u = new URL(finalUrl);
         const clean = `${u.origin}${u.pathname}`;
@@ -163,7 +161,6 @@ async function resolveUrl(url) {
   } catch (e) {
     console.log('[Resolver] Redirect follow error:', e.message);
   }
-  // Fallback: extract path from dl link and build www URL
   try {
     const u = new URL(url);
     const slug = u.pathname.replace(/^\/dl\//, '');
@@ -177,7 +174,6 @@ async function resolveUrl(url) {
 }
 
 // ─── SCRAPER: axios + cheerio ─────────────────────────────────────────────────
-// Rotate user agents to avoid blocks
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
@@ -196,7 +192,6 @@ function parsePrice(str) {
 }
 
 async function scrapeFK(url) {
-  // Make sure it's www.flipkart.com
   if (!url.includes('www.flipkart.com')) {
     url = url.replace('flipkart.com', 'www.flipkart.com');
   }
@@ -241,7 +236,6 @@ async function scrapeFK(url) {
 
       // ── Main Price (Price to Buy) ─────────────────────────────
       let price = null;
-      // 2024-2025 Flipkart selectors
       for (const s of [
         'div.Nx9bqj.CxhGGd', 'div.Nx9bqj', '.CEmiEU .Nx9bqj',
         '._30jeq3._16Jk6d', '._16Jk6d', '._25b18c ._30jeq3',
@@ -251,7 +245,6 @@ async function scrapeFK(url) {
         const p = parsePrice(t);
         if (p && p > 100) { price = p; break; }
       }
-      // Universal fallback: biggest ₹ number on page
       if (!price) {
         const allPrices = [];
         $('*').each((_, el) => {
@@ -264,74 +257,148 @@ async function scrapeFK(url) {
         if (allPrices.length) price = allPrices.sort((a,b)=>b-a)[0];
       }
 
-      // ── Lowest Price For You (bank offer / card discount) ─────
-      // Flipkart shows "Lowest price for you ₹XX,XXX" near bank offer section
+      // ══════════════════════════════════════════════════════════════════
+      // ── Lowest Price For You (from "Apply offers for maximum savings") ─
+      // ══════════════════════════════════════════════════════════════════
       let lowestPrice = null;
 
-      // Strategy 1: dedicated class selectors (current + legacy)
+      // Strategy 1: Dedicated Flipkart CSS selectors for "Lowest price for you" label
+      // These classes wrap the ₹ price shown below the "Apply offers for maximum savings" heading
       for (const s of [
-        '.yRaY8j.ZYYwLA', '.yRaY8j', '._3qQ9m1', '.PCWT0u', '.LFwuGS',
-        '._2-gKeQ', '.Ws0mKI', '._3HWev4 .Nx9bqj', '[class*="yRaY8j"]',
+        '.yRaY8j.ZYYwLA',   // most specific – price inside lowest-price badge
+        '.ZYYwLA',           // price span in the offers block
+        '.yRaY8j',           // label + price combo
+        '._3HWev4 .Nx9bqj', // offer section price
+        '._2-gKeQ',
+        '.PCWT0u',
+        '.LFwuGS',
+        '.Ws0mKI',
+        '[class*="yRaY8j"]',
+        '[class*="ZYYwLA"]',
       ]) {
         const t = $(s).first().text().trim();
         const p = parsePrice(t);
-        if (p && p > 100) { lowestPrice = p; break; }
+        if (p && p > 100) { lowestPrice = p; console.log(`[Scraper] lowestPrice via selector "${s}": ₹${p}`); break; }
       }
 
-      // Strategy 2: scan ALL text containing "lowest price" phrase
+      // Strategy 2: Find the "Apply offers for maximum savings" SECTION NODE
+      // then grab the SMALLEST ₹ price inside it (that's the final lowest price)
+      if (!lowestPrice) {
+        let offerSectionEl = null;
+
+        // Walk every element, find the one whose direct text matches the heading
+        $('*').each((_, el) => {
+          if (offerSectionEl) return false;
+          const ownTxt = $(el).clone().children().remove().end().text().trim();
+          if (/apply\s+offers\s+for\s+maximum\s+savings/i.test(ownTxt)) {
+            offerSectionEl = el;
+          }
+        });
+
+        // If not found by own text, try full subtree text (heading may be in a child)
+        if (!offerSectionEl) {
+          $('*').each((_, el) => {
+            if (offerSectionEl) return false;
+            const fullTxt = $(el).text();
+            if (/apply\s+offers\s+for\s+maximum\s+savings/i.test(fullTxt)) {
+              // Only commit if the element is "small enough" (not the whole body)
+              const childCount = $(el).find('*').length;
+              if (childCount < 300) offerSectionEl = el;
+            }
+          });
+        }
+
+        if (offerSectionEl) {
+          // Collect ALL ₹ numbers inside this section
+          const sectionPrices = [];
+          const sectionHtml = $(offerSectionEl).text();
+          const rupeeMatches = sectionHtml.match(/₹[\d,]+/g) || [];
+          for (const m of rupeeMatches) {
+            const p = parsePrice(m);
+            if (p && p > 100) sectionPrices.push(p);
+          }
+          if (sectionPrices.length) {
+            // The LOWEST value in the offer section = "Lowest price for you"
+            lowestPrice = Math.min(...sectionPrices);
+            console.log(`[Scraper] lowestPrice via "Apply offers" section: ₹${lowestPrice} (found: ${sectionPrices})`);
+          }
+        }
+      }
+
+      // Strategy 3: Scan every element whose OWN text contains "lowest price"
+      // then look for a ₹ number nearby (sibling, parent, or same subtree)
       if (!lowestPrice) {
         $('*').each((_, el) => {
           if (lowestPrice) return false;
-          const txt = $(el).clone().children().remove().end().text().trim().toLowerCase();
-          if (txt.includes('lowest price')) {
-            // get the price numbers in this element's full subtree
+          const own = $(el).clone().children().remove().end().text().trim().toLowerCase();
+          if (own.includes('lowest price')) {
+            // Try subtree of this element first
+            const subtreePrices = [];
             const fullTxt = $(el).text();
-            const matches = fullTxt.match(/₹[\d,]+/g) || [];
-            for (const m of matches) {
-              const p = parsePrice(m);
-              if (p && p > 100) { lowestPrice = p; return false; }
+            const m1 = fullTxt.match(/₹[\d,]+/g) || [];
+            for (const m of m1) { const p = parsePrice(m); if (p && p > 100) subtreePrices.push(p); }
+
+            // Try parent element's subtree
+            const parentTxt = $(el).parent().text();
+            const m2 = parentTxt.match(/₹[\d,]+/g) || [];
+            for (const m of m2) { const p = parsePrice(m); if (p && p > 100) subtreePrices.push(p); }
+
+            // Try next sibling
+            const sibTxt = $(el).next().text();
+            const m3 = sibTxt.match(/₹[\d,]+/g) || [];
+            for (const m of m3) { const p = parsePrice(m); if (p && p > 100) subtreePrices.push(p); }
+
+            if (subtreePrices.length) {
+              lowestPrice = Math.min(...subtreePrices);
+              console.log(`[Scraper] lowestPrice via "lowest price" text scan: ₹${lowestPrice}`);
+              return false;
             }
           }
         });
       }
 
-      // Strategy 3: bank/card offer section — find price LOWER than main price
+      // Strategy 4: Bank/card offer containers – find a price strictly BELOW main price
       if (!lowestPrice && price) {
         const offerSelectors = [
-          '[class*="offer"]', '[class*="Offer"]', '[class*="bank"]', '[class*="Bank"]',
-          '[class*="cashback"]', '[class*="coupon"]', '[class*="deal"]',
+          '[class*="offer"]', '[class*="Offer"]',
+          '[class*="bank"]',  '[class*="Bank"]',
+          '[class*="savings"]', '[class*="Savings"]',
+          '[class*="cashback"]', '[class*="coupon"]',
+          '[class*="deal"]',
         ];
         for (const s of offerSelectors) {
           $(s).each((_, el) => {
             if (lowestPrice) return false;
             const txt = $(el).text();
             const matches = txt.match(/₹[\d,]+/g) || [];
-            for (const m of matches) {
-              const p = parsePrice(m);
-              if (p && p > 100 && p < price) { lowestPrice = p; return false; }
-            }
+            const candidates = matches.map(parsePrice).filter(p => p && p > 100 && p < price);
+            if (candidates.length) { lowestPrice = Math.min(...candidates); return false; }
           });
           if (lowestPrice) break;
         }
+        if (lowestPrice) console.log(`[Scraper] lowestPrice via bank/offer container: ₹${lowestPrice}`);
       }
 
-      // Strategy 4: find any ₹ price that is LESS than main price (could be bank offer)
+      // Strategy 5: Any standalone ₹ price on page that is strictly lower than main price
       if (!lowestPrice && price) {
-        const allPrices = [];
+        const allLower = [];
         $('*').each((_, el) => {
           const own = $(el).clone().children().remove().end().text().trim();
           if (own.match(/^₹[\d,]+$/)) {
             const p = parsePrice(own);
-            if (p && p > 100 && p < price) allPrices.push(p);
+            if (p && p > 100 && p < price) allLower.push(p);
           }
         });
-        if (allPrices.length) lowestPrice = Math.min(...allPrices);
+        if (allLower.length) {
+          lowestPrice = Math.min(...allLower);
+          console.log(`[Scraper] lowestPrice via page-wide lower price scan: ₹${lowestPrice}`);
+        }
       }
 
+      // Final fallback: lowestPrice = main price (no bank offer found)
       if (!lowestPrice) lowestPrice = price;
 
       // ── Effective Price = whichever is LOWER ──────────────────
-      // (bank offer price is always better deal, track that)
       const effectivePrice = Math.min(price, lowestPrice);
 
       if (!price) {
@@ -387,7 +454,6 @@ async function runCheck() {
       p.lastChecked = new Date().toISOString();
       if (pc || lc || ec) {
         let msg = `🚨 <b>PRICE ALERT!</b>\n\n📦 <b>${p.name.slice(0, 60)}</b>\n\n`;
-        // Always show effective (best available) price change first
         if (ec) {
           const d = newEff - prevEff;
           msg += `${d < 0 ? '🎉📉' : '📈'} <b>Best Price for You:</b>\n  Was: ₹${fmt(prevEff)}\n  Now: ₹${fmt(newEff)}\n  <b>${d < 0 ? '▼ DROPPED ₹' : '▲ UP ₹'}${fmt(Math.abs(d))}</b>\n\n`;
@@ -417,7 +483,6 @@ async function runCheck() {
   isRunning = false;
 }
 
-// Auto-start
 setTimeout(startChecking, 3000);
 
 // ─── KEEP-ALIVE ───────────────────────────────────────────────────────────────
@@ -558,19 +623,19 @@ async function loadData(){
 function renderList(ps){
   const c=document.getElementById('plist');
   if(!ps.length){c.innerHTML='<div class="empty"><div class="ei">📭</div><div>Add a Flipkart product link above!</div></div>';return;}
-  c.innerHTML=ps.map((p,i)=>\`<div class="pc">
-    <div class="pn">\${i+1}</div>
+  c.innerHTML=ps.map((p,i)=>`<div class="pc">
+    <div class="pn">${i+1}</div>
     <div class="pi">
-      <div class="pname" title="\${p.name}">\${p.name}</div>
+      <div class="pname" title="${p.name}">${p.name}</div>
       <div class="ptags">
-        \${(p.effectivePrice&&p.effectivePrice!==p.price)?\`<span class="tag tg" title="Best price with bank offer">🏷 ₹\${fmt(p.effectivePrice)} <small style="opacity:.7;font-size:10px">Best</small></span>\`:''}
-        <span class="tag tb" title="Price to Buy">💰 ₹\${fmt(p.price)}</span>
-        \${(p.lowestPrice&&p.lowestPrice!==p.price&&p.lowestPrice!==p.effectivePrice)?\`<span class="tag" style="background:rgba(245,158,11,.12);color:#fbbf24;border:1px solid rgba(245,158,11,.2)">🏦 ₹\${fmt(p.lowestPrice)}</span>\`:''}
+        ${(p.effectivePrice&&p.effectivePrice!==p.price)?`<span class="tag tg" title="Best price with bank offer">🏷 ₹${fmt(p.effectivePrice)} <small style="opacity:.7;font-size:10px">Best</small></span>`:''}
+        <span class="tag tb" title="Price to Buy">💰 ₹${fmt(p.price)}</span>
+        ${(p.lowestPrice&&p.lowestPrice!==p.price&&p.lowestPrice!==p.effectivePrice)?`<span class="tag" style="background:rgba(245,158,11,.12);color:#fbbf24;border:1px solid rgba(245,158,11,.2)">🏦 ₹${fmt(p.lowestPrice)}</span>`:''}
       </div>
-      <div class="pt">Last checked: \${p.lastChecked?new Date(p.lastChecked).toLocaleString('en-IN'):'Never'}</div>
+      <div class="pt">Last checked: ${p.lastChecked?new Date(p.lastChecked).toLocaleString('en-IN'):'Never'}</div>
     </div>
-    <button class="btn bsm br" onclick="del('\${p.id}')">🗑</button>
-  </div>\`).join('');
+    <button class="btn bsm br" onclick="del('${p.id}')">🗑</button>
+  </div>`).join('');
 }
 async function addProduct(){
   const url=document.getElementById('purl').value.trim();
@@ -600,7 +665,6 @@ loadData();setInterval(loadData,10000);
 </body>
 </html>`;
 
-// ─── API ROUTES ───────────────────────────────────────────────────────────────
 app.get('/', (_, res) => res.send(PANEL));
 app.get('/ping', (_, res) => res.json({ ok: true, ts: Date.now() }));
 
