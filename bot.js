@@ -7,11 +7,11 @@ const fs          = require('fs');
 const https       = require('https');
 const http        = require('http');
 
-// ─── CONFIG ───────────────────────────────────────────────────────────────────
-const BOT_TOKEN     = process.env.BOT_TOKEN     || '8805762974:AAF1MiTNy9HffCv1AXDGP2QIHWSxlmrW1RU'; 
+// --- 🔒 CONFIGURATION HARDLOCKED ---
+const BOT_TOKEN     = process.env.BOT_TOKEN     || '8805762974:AAF1MiTNy9HffCv1AXDGP2QIHWSxlmrW1RU'; // 🔥 New Token Loaded
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '7485181331';
-const PORT          = process.env.PORT          || 10000;
-const RENDER_URL    = process.env.RENDER_URL    || `https://fk-stock-final.onrender.com`;
+const PORT          = process.env.PORT          || 10000; 
+const RENDER_URL    = process.env.RENDER_URL    || 'https://fk-stock-final.onrender.com'; 
 const CHECK_MS      = 15000;
 const MAX_PRODUCTS  = 25;
 
@@ -112,16 +112,15 @@ bot.onText(/\/list/, async msg => {
   if (!db.products.length) return tg(cid, '📭 No products. Use /addproduct &lt;url&gt;');
   let txt = `📋 <b>Tracked (${db.products.length}/${MAX_PRODUCTS})</b>\n\n`;
   db.products.forEach((p, i) => {
-    txt += `${i+1}. <b>${p.name.slice(0, 45)}</b>\n   💰 ₹${fmt(p.price)}  🏷 ₹${fmt(p.lowestPrice)}\n   🆔 <code>${p.id}</code>\n   ❌ <b>Stop tracking:</b> /remove_${p.id}\n\n`;
+    txt += `${i+1}. <b>${p.name.slice(0, 45)}</b>\n   💰 ₹${fmt(p.price)}  🏷 ₹${fmt(p.lowestPrice)}\n   🆔 <code>${p.id}</code>\n\n`;
   });
   tg(cid, txt);
 });
 
-bot.onText(/\/remove(?:_)?(.+)/, async (msg, m) => {
+bot.onText(/\/remove (.+)/, async (msg, m) => {
   const cid = String(msg.chat.id);
   if (!isApproved(cid)) return tg(cid, '⛔ Access denied.');
-  const targetId = m[1].trim();
-  const idx = db.products.findIndex(p => String(p.id) === targetId);
+  const idx = db.products.findIndex(p => String(p.id) === m[1].trim());
   if (idx === -1) return tg(cid, '❌ Not found. Use /list');
   const [r] = db.products.splice(idx, 1); saveDB();
   tg(cid, `🗑 Removed: <b>${r.name.slice(0, 50)}</b>`);
@@ -232,17 +231,14 @@ async function scrapeFK(url) {
           const ppd = JSON.parse(ppdMatch[1]);
           if (ppd.finalPrice && ppd.finalPrice > 100) price       = ppd.finalPrice;
           if (ppd.nepPrice   && ppd.nepPrice   > 100) lowestPrice = ppd.nepPrice;
-          console.log(`[Scraper] ✅ ppd JSON → Price:₹${price}  LowestForYou:₹${lowestPrice}  MRP:₹${ppd.mrp}`);
-        } catch (e) {
-          console.log('[Scraper] ppd parse error:', e.message);
-        }
+        } catch (e) {}
       }
 
       if (!lowestPrice) {
         const nepMatch = html.match(/"nepPrice"\s*:\s*(\d+)/);
         if (nepMatch) {
           const p = parseInt(nepMatch[1]);
-          if (p > 100) { lowestPrice = p; console.log(`[Scraper] ✅ nepPrice regex → LowestForYou:₹${p}`); }
+          if (p > 100) lowestPrice = p;
         }
       }
 
@@ -250,7 +246,7 @@ async function scrapeFK(url) {
         const fpMatch = html.match(/"finalPrice"\s*:\s*(\d+)/);
         if (fpMatch) {
           const p = parseInt(fpMatch[1]);
-          if (p > 100) { price = p; console.log(`[Scraper] ✅ finalPrice regex → Price:₹${p}`); }
+          if (p > 100) price = p;
         }
       }
 
@@ -258,7 +254,7 @@ async function scrapeFK(url) {
         for (const s of ['div.Nx9bqj.CxhGGd', 'div.Nx9bqj', '.CEmiEU .Nx9bqj', '._30jeq3._16Jk6d', '._16Jk6d']) {
           const t = $(s).first().text().trim();
           const p = parsePrice(t);
-          if (p && p > 100) { price = p; console.log(`[Scraper] price via selector "${s}": ₹${p}`); break; }
+          if (p && p > 100) { price = p; break; }
         }
       }
 
@@ -266,12 +262,10 @@ async function scrapeFK(url) {
       const effectivePrice = Math.min(price, lowestPrice);
 
       if (!price) {
-        console.log(`[Scraper] Attempt ${attempt}: no price found`);
         if (attempt < 3) { await sleep(3000); continue; }
         return null;
       }
 
-      console.log(`[Scraper] ✅ "${name.slice(0, 35)}" | PriceToBuy:₹${price} | LowestForYou:₹${lowestPrice} | Effective:₹${effectivePrice}`);
       return { name, price, lowestPrice, effectivePrice };
 
     } catch (e) {
@@ -304,12 +298,11 @@ function stopChecking() {
 async function runCheck() {
   if (isRunning || !db.products.length) return;
   isRunning = true;
-  console.log(`[${new Date().toLocaleTimeString('en-IN')}] Checking ${db.products.length} product(s)...`);
   
   for (const p of db.products) {
     try {
       const info = await scrapeFK(p.url);
-      if (!info || !info.price) { console.log(`[Check] ⚠️  No data: ${p.name.slice(0, 30)}`); continue; }
+      if (!info || !info.price) { continue; } // 🔥 Silently skipped out of logs to protect space
 
       const prevEff = p.effectivePrice || p.lowestPrice || p.price;
       const newEff  = info.effectivePrice;
@@ -335,8 +328,7 @@ async function runCheck() {
         for (const uid of targets) await tg(uid, msg);
         console.log(`[Alert] 🔔 Sent: ${p.name.slice(0, 30)}`);
       } else {
-        console.log(`[Check] ✅ No change: ${p.name.slice(0, 30)} | Buy:₹${info.price} | LowestForYou:₹${info.lowestPrice}`);
-        saveDB(); 
+        saveDB(); // 🔥 "No change" log successfully deleted from terminal line matrix
       }
     } catch (e) { console.error('[Check] Error:', e.message); }
   }
@@ -428,4 +420,185 @@ const PANEL = '<!DOCTYPE html>\n' +
 '    <span style="font-size:24px">&#128722;</span>\n' +
 '    <div><h1>Flipkart Price Alert Bot</h1><small>ppd-JSON &middot; 15s interval &middot; 24/7</small></div>\n' +
 '  </div>\n' +
-'  <div class="pill"><div class="dot" id="sdot"></div><span id="stxt">Loading&hellip;</span></div>\n
+'  <div class="pill"><div class="dot" id="sdot"></div><span id="stxt">Loading&hellip;</span></div>\n' +
+'</nav>\n' +
+'<div class="wrap">\n' +
+'  <div class="stats">\n' +
+'    <div class="sc"><span class="si">&#128230;</span><div><div class="sv" id="sP">0</div><div class="sl">Products Tracked</div></div></div>\n' +
+'    <div class="sc"><span class="si">&#128101;</span><div><div class="sv" id="sU">0</div><div class="sl">Approved Users</div></div></div>\n' +
+'    <div class="sc"><span class="si">&#9201;</span><div><div class="sv">15s</div><div class="sl">Check Interval</div></div></div>\n' +
+'    <div class="sc"><span class="si">&#127919;</span><div><div class="sv" id="sS">25</div><div class="sl">Slots Free</div></div></div>\n' +
+'  </div>\n' +
+'  <div class="row2">\n' +
+'    <div class="card">\n' +
+'      <div class="ch"><h2>&#10133; Add Flipkart Product</h2><span style="font-size:11px;color:var(--mu);background:rgba(37,99,235,.1);padding:2px 10px;border-radius:20px">Max 25</span></div>\n' +
+'      <div class="cb">\n' +
+'        <div class="tip">&#128161; Use <b>www.flipkart.com</b> product page link for best results.</div>\n' +
+'        <div class="irow">\n' +
+'          <input type="url" id="purl" placeholder="Paste Flipkart product URL here&hellip;" />\n' +
+'          <button class="btn ba" onclick="addProduct()">Add</button>\n' +
+'        </div>\n' +
+'        <div class="ctrlrow">\n' +
+'          <button class="btn bg" onclick="ctrl(\'start\')">&#9654; Start</button>\n' +
+'          <button class="btn br" onclick="ctrl(\'stop\')">&#9209; Stop</button>\n' +
+'          <button class="btn bam" onclick="ctrl(\'check\')">&#128260; Check Now</button>\n' +
+'        </div>\n' +
+'      </div>\n' +
+'    </div>\n' +
+'    <div class="card">\n' +
+'      <div class="ch"><h2>&#128203; Activity Log</h2><button class="btn bsm bgh" onclick="clrLog()">Clear</button></div>\n' +
+'      <div class="cb" style="padding:10px"><div class="log" id="logBox"><div class="li">[System] Panel ready&hellip;</div></div></div>\n' +
+'    </div>\n' +
+'  </div>\n' +
+'  <div class="card">\n' +
+'    <div class="ch"><h2>&#128717; Tracked Products</h2><button class="btn bsm bgh" onclick="loadData()">&#8635; Refresh</button></div>\n' +
+'    <div class="cb"><div class="plist" id="plist"><div class="empty"><div class="ei">&#128205;</div><div>No products yet. Add a Flipkart product link above!</div></div></div></div>\n' +
+'  </div>\n' +
+'</div>\n' +
+'<div class="toast" id="toast"></div>\n' +
+'<script>\n' +
+'function toast(msg,type){\n' +
+'  type=type||"ok";\n' +
+'  var t=document.getElementById("toast");\n' +
+'  t.textContent=(type==="ok"?"✅ ":"❌ ")+msg;\n' +
+'  t.className="toast show t"+type;\n' +
+'  setTimeout(function(){t.className="toast";},3200);\n' +
+'}\n' +
+'function log(msg,cls){\n' +
+'  cls=cls||"li";\n' +
+'  var b=document.getElementById("logBox");\n' +
+'  var d=document.createElement("div");\n' +
+'  d.className=cls;\n' +
+'  d.textContent="["+new Date().toLocaleTimeString("en-IN")+"] "+msg;\n' +
+'  b.appendChild(d);\n' +
+'  b.scrollTop=b.scrollHeight;\n' +
+'}\n' +
+'function clrLog(){document.getElementById("logBox").innerHTML="";}\n' +
+'function fmt(n){return n?Number(n).toLocaleString("en-IN"):"N/A";}\n' +
+'\n' +
+'function renderList(ps){\n' +
+'  var c=document.getElementById("plist");\n' +
+'  if(!ps.length){\n' +
+'    c.innerHTML=\'<div class="empty"><div class="ei">&#128205;</div><div>Add a Flipkart product link above!</div></div>\';\n' +
+'    return;\n' +
+'  }\n' +
+'  var html="";\n' +
+'  for(var i=0;i<ps.length;i++){\n' +
+'    var p=ps[i];\n' +
+'    var bestTag="";\n' +
+'    if(p.effectivePrice && p.effectivePrice!==p.price){\n' +
+'      bestTag=\'<span class="tag tg" title="Best price with bank offer">🏷 ₹\'+fmt(p.effectivePrice)+\' <small style="opacity:.7;font-size:10px">Best</small></span>\';\n' +
+'    }\n' +
+'    var lowestTag="";\n' +
+'    if(p.lowestPrice && p.lowestPrice!==p.price && p.lowestPrice!==p.effectivePrice){\n' +
+'      lowestTag=\'<span class="tag" style="background:rgba(245,158,11,.12);color:#fbbf24;border:1px solid rgba(245,158,11,.2)">🏦 ₹\'+fmt(p.lowestPrice)+\'</span>\';\n' +
+'    }\n' +
+'    var lastChk=p.lastChecked?new Date(p.lastChecked).toLocaleString("en-IN"):"Never";\n' +
+'    html+=\'<div class="pc">\';\n' +
+'    html+=\'<div class="pn">\'+(i+1)+\'</div>\';\n' +
+'    html+=\'<div class="pi">\';\n' +
+'    html+=\'<div class="pname" title="\'+p.name+\'">\'+p.name+\'</div>\';\n' +
+'    html+=\'<div class="ptags">\'+bestTag+\'<span class="tag tb" title="Price to Buy">💰 ₹\'+fmt(p.price)+\'</span>\'+lowestTag+\'</div>\';\n' +
+'    html+=\'<div class="pt">Last checked: \'+lastChk+\'</div>\';\n' +
+'    html+=\'</div>\';\n' +
+'    html+=\'<button class="btn bsm br" onclick="del(\\\'\'+(p.id)+\'\\\')">🗑</button>\';\n' +
+'    html+=\'</div>\';\n' +
+'  }\n' +
+'  c.innerHTML=html;\n' +
+'}\n' +
+'\n' +
+'async function loadData(){\n' +
+'  try{\n' +
+'    var r=await fetch("/api/status");\n' +
+'    var d=await r.json();\n' +
+'    document.getElementById("sdot").className="dot "+(d.isChecking?"on":"off");\n' +
+'    document.getElementById("stxt").textContent=d.isChecking?"Checking Active":"Stopped";\n' +
+'    document.getElementById("sP").textContent=d.products.length;\n' +
+'    document.getElementById("sU").textContent=d.approvedUsers;\n' +
+'    document.getElementById("sS").textContent=25-d.products.length;\n' +
+'    renderList(d.products);\n' +
+'  }catch(e){}\n' +
+'}\n' +
+'\n' +
+'async function addProduct(){\n' +
+'  var url=document.getElementById("purl").value.trim();\n' +
+'  if(!url)return toast("Enter a URL","err");\n' +
+'  if(!url.includes("flipkart.com"))return toast("Only Flipkart links!","err");\n' +
+'  try{\n' +
+'    var r=await fetch("/api/products",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:url})});\n' +
+'    var d=await r.json();\n' +
+'    if(d.success){\n' +
+'      toast(d.product.name.slice(0,35));\n' +
+'      log("\\u2705 "+d.product.name+" | LowestForYou \\u20b9"+fmt(d.product.lowestPrice)+" | Buy \\u20b9"+fmt(d.product.price),"ls");\n' +
+'      document.getElementById("purl").value="";\n' +
+'      loadData();\n' +
+'    }else{\n' +
+'      toast(d.error||"Failed","err");\n' +
+'      log("\\u274c "+(d.error||"Failed"),"le");\n' +
+'    }\n' +
+'  }catch(e){toast("Error","err");}\n' +
+'}\n' +
+'\n' +
+'async function del(id){\n' +
+'  if(!confirm("Remove this product?"))return;\n' +
+'  var r=await fetch("/api/products/"+id,{method:"DELETE"});\n' +
+'  var d=await r.json();\n' +
+'  if(d.success){toast("Removed");loadData();}else toast(d.error,"err");\n' +
+'}\n' +
+'\n' +
+'async function ctrl(a){\n' +
+'  log("\\u2192 "+a,"lw");\n' +
+'  var r=await fetch("/api/control",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:a})});\n' +
+'  var d=await r.json();\n' +
+'  toast(d.message);\n' +
+'  log("\\u2705 "+d.message,"ls");\n' +
+'  loadData();\n' +
+'}\n' +
+'\n' +
+'loadData();\n' +
+'setInterval(loadData,10000);\n' +
+'</script>\n' +
+'</body>\n' +
+'</html>';
+
+// ─── API ROUTES ───────────────────────────────────────────────────────────────
+app.get('/', (_, res) => res.send(PANEL));
+app.get('/ping', (_, res) => res.json({ ok: true, ts: Date.now() }));
+
+app.get('/api/status', (_, res) => res.json({
+  isChecking: db.isChecking, products: db.products,
+  approvedUsers: db.approvedUsers.length, pendingUsers: db.pendingUsers.length,
+}));
+
+app.post('/api/products', async (req, res) => {
+  let { url } = req.body;
+  if (!url || !url.includes('flipkart.com')) return res.json({ success: false, error: 'Invalid Flipkart URL' });
+  if (db.products.length >= MAX_PRODUCTS) return res.json({ success: false, error: `Max ${MAX_PRODUCTS} reached` });
+  if (db.products.find(p => p.url === url)) return res.json({ success: false, error: 'Already tracking' });
+  url = await resolveUrl(url);
+  const info = await scrapeFK(url);
+  if (!info || !info.price) return res.json({ success: false, error: 'Could not fetch price. Use the product page URL directly (www.flipkart.com/...)' });
+  const product = { id: Date.now(), url, name: info.name, price: info.price, lowestPrice: info.lowestPrice, effectivePrice: info.effectivePrice, lastChecked: new Date().toISOString(), addedBy: 'panel' };
+  db.products.push(product); saveDB();
+  res.json({ success: true, product });
+});
+
+app.delete('/api/products/:id', (req, res) => {
+  const idx = db.products.findIndex(p => String(p.id) === req.params.id);
+  if (idx === -1) return res.json({ success: false, error: 'Not found' });
+  db.products.splice(idx, 1); saveDB();
+  res.json({ success: true });
+});
+
+app.post('/api/control', (req, res) => {
+  const { action } = req.body;
+  if (action === 'start') { startChecking(); return res.json({ message: '✅ Checking started (15s)' }); }
+  if (action === 'stop')  { stopChecking();  return res.json({ message: '⏹ Checking stopped' }); }
+  if (action === 'check') { runCheck();      return res.json({ message: '🔄 Check triggered' }); }
+  res.json({ message: 'Unknown' });
+});
+
+app.listen(PORT, () => {
+  console.log(`\n🚀 http://localhost:${PORT}`);
+  console.log(`🤖 Telegram: ACTIVE | Admin: ${ADMIN_CHAT_ID}\n`);
+});
