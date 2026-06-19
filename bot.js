@@ -10,12 +10,12 @@ const http        = require('http');
 // --- 🔒 CONFIGURATION HARDLOCKED ---
 const BOT_TOKEN     = process.env.BOT_TOKEN     || '8805762974:AAH1yHBXSwRVnPaQyc6Jey0eU0MN9oyKXQ4';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '7485181331';
-const PORT          = process.env.PORT          || 10000; // Fixed for Render deployment standards
+const PORT          = process.env.PORT          || 10000; 
 const RENDER_URL    = process.env.RENDER_URL    || 'https://fk-stock-final.onrender.com'; 
 const CHECK_MS      = 15000;
 const MAX_PRODUCTS  = 25;
 
-// ─── DATA ─────────────────────────────────────────────────────────────────────
+// ─── DATA MULTI-USER DATA STRUCTURE LCOK ──────────────────────────────────────
 const DATA_FILE = './data.json';
 function loadDB() {
   try { if (fs.existsSync(DATA_FILE)) return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); } catch (e) {}
@@ -24,7 +24,7 @@ function loadDB() {
 function saveDB() { try { fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2)); } catch (e) {} }
 let db = loadDB();
 
-const app = express();
+const app = Calendars = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -89,12 +89,17 @@ bot.onText(/\/addproduct (.+)/, async (msg, m) => {
   if (!isApproved(cid)) return tg(cid, '⛔ Access denied. Send /start');
   let url = m[1].trim();
   if (!url.includes('flipkart.com')) return tg(cid, '❌ Only Flipkart links supported!');
-  if (db.products.length >= MAX_PRODUCTS) return tg(cid, `❌ Max ${MAX_PRODUCTS} limit reached!`);
-  if (db.products.find(p => p.url === url)) return tg(cid, '⚠️ Already tracking this!');
+  
+  // 🔥 Filter products by user to allow individual 25 product limits
+  const userProducts = db.products.filter(p => String(p.addedBy) === cid);
+  if (userProducts.length >= MAX_PRODUCTS) return tg(cid, `❌ Max ${MAX_PRODUCTS} limit reached for your account!`);
+  if (db.products.find(p => p.url === url && String(p.addedBy) === cid)) return tg(cid, '⚠️ Already tracking this in your list!');
+  
   await tg(cid, '⏳ Fetching live price...');
   url = await resolveUrl(url);
   const info = await scrapeFK(url);
   if (!info) return tg(cid, '❌ Could not fetch price. Make sure it\'s a valid Flipkart product page link.');
+  
   const product = { id: Date.now(), url, name: info.name, price: info.price, lowestPrice: info.lowestPrice, effectivePrice: info.effectivePrice, lastChecked: new Date().toISOString(), addedBy: cid };
   db.products.push(product); saveDB();
   tg(cid,
@@ -109,9 +114,13 @@ bot.onText(/\/addproduct (.+)/, async (msg, m) => {
 bot.onText(/\/list/, async msg => {
   const cid = String(msg.chat.id);
   if (!isApproved(cid)) return tg(cid, '⛔ Access denied.');
-  if (!db.products.length) return tg(cid, '📭 No products. Use /addproduct &lt;url&gt;');
-  let txt = `📋 <b>Tracked (${db.products.length}/${MAX_PRODUCTS})</b>\n\n`;
-  db.products.forEach((p, i) => {
+  
+  // 🔥 Show only products added by the user requesting the list
+  const userProducts = db.products.filter(p => String(p.addedBy) === cid);
+  if (!userProducts.length) return tg(cid, '📭 No products. Use /addproduct &lt;url&gt;');
+  
+  let txt = `📋 <b>Tracked (${userProducts.length}/${MAX_PRODUCTS})</b>\n\n`;
+  userProducts.forEach((p, i) => {
     txt += `${i+1}. <b>${p.name.slice(0, 45)}</b>\n   💰 ₹${fmt(p.price)}  🏷 ₹${fmt(p.lowestPrice)}\n   🆔 <code>${p.id}</code>\n\n`;
   });
   tg(cid, txt);
@@ -120,8 +129,12 @@ bot.onText(/\/list/, async msg => {
 bot.onText(/\/remove (.+)/, async (msg, m) => {
   const cid = String(msg.chat.id);
   if (!isApproved(cid)) return tg(cid, '⛔ Access denied.');
-  const idx = db.products.findIndex(p => String(p.id) === m[1].trim());
-  if (idx === -1) return tg(cid, '❌ Not found. Use /list');
+  
+  const targetId = m[1].trim();
+  // 🔥 Ensure a user can only delete their own product mapping layout
+  const idx = db.products.findIndex(p => String(p.id) === targetId && String(p.addedBy) === cid);
+  if (idx === -1) return tg(cid, '❌ Not found in your tracking list. Use /list');
+  
   const [r] = db.products.splice(idx, 1); saveDB();
   tg(cid, `🗑 Removed: <b>${r.name.slice(0, 50)}</b>`);
 });
@@ -129,9 +142,10 @@ bot.onText(/\/remove (.+)/, async (msg, m) => {
 bot.onText(/\/status/, async msg => {
   const cid = String(msg.chat.id);
   if (!isApproved(cid)) return tg(cid, '⛔ Access denied.');
+  const userProducts = db.products.filter(p => String(p.addedBy) === cid);
   tg(cid,
     `📊 <b>Status</b>\n\n🔄 ${db.isChecking ? '✅ Checking Active' : '❌ Stopped'}\n` +
-    `📦 Products: ${db.products.length}/${MAX_PRODUCTS}\n👥 Users: ${db.approvedUsers.length}\n⏱ Interval: 15s\n🕐 ${new Date().toLocaleString('en-IN')}`
+    `📦 Your Products: ${userProducts.length}/${MAX_PRODUCTS}\n👥 Total Bot Users: ${db.approvedUsers.length}\n⏱ Interval: 15s\n🕐 ${new Date().toLocaleString('en-IN')}`
   );
 });
 
@@ -193,7 +207,6 @@ async function scrapeFK(url) {
     try {
       console.log(`[Scraper] Attempt ${attempt}: ${url.slice(0, 65)}`);
 
-      // 🔥 ANTI-BLOCK HEADERS & Localized Pincode Cookie Emulation
       const resp = await axios.get(url, {
         headers: {
           'User-Agent': nextUA(),
@@ -204,19 +217,16 @@ async function scrapeFK(url) {
           'Cache-Control': 'no-cache',
           'Pragma': 'no-cache',
           'Upgrade-Insecure-Requests': '1',
-          'Cookie': 'pincode=125121; sn=125121; amsn=125121;' // Critical localized route protection map
+          'Cookie': 'pincode=125121; sn=125121; amsn=125121;' 
         },
         timeout: 15000, 
         maxRedirects: 5,
-        validateStatus: function (status) {
-          return status >= 200 && status < 300; 
-        }
+        validateStatus: function (status) { return status >= 200 && status < 300; }
       });
 
       const html = resp.data.toString();
       const $    = cheerio.load(html);
 
-      // Name Extractor
       let name = '';
       for (const s of ['span.VU-ZEz', 'span.B_NuCI', '._35KyD6', 'h1 span', '.yhB1nd', 'title']) {
         const t = s === 'title'
@@ -229,22 +239,23 @@ async function scrapeFK(url) {
       let price       = null;
       let lowestPrice = null;
 
-      // STRATEGY 0: Embedded Data Layer JSON Parsing
       const ppdMatch = html.match(/"ppd"\s*:\s*(\{[^}]+\})/);
       if (ppdMatch) {
         try {
           const ppd = JSON.parse(ppdMatch[1]);
           if (ppd.finalPrice && ppd.finalPrice > 100) price       = ppd.finalPrice;
           if (ppd.nepPrice   && ppd.nepPrice   > 100) lowestPrice = ppd.nepPrice;
-        } catch (e) {}
+          console.log(`[Scraper] ✅ ppd JSON → Price:₹${price}  LowestForYou:₹${lowestPrice}  MRP:₹${ppd.mrp}`);
+        } catch (e) {
+          console.log('[Scraper] ppd parse error:', e.message);
+        }
       }
 
-      // STRATEGY 1: JSON Regex Backup Matcher
       if (!lowestPrice) {
         const nepMatch = html.match(/"nepPrice"\s*:\s*(\d+)/);
         if (nepMatch) {
           const p = parseInt(nepMatch[1]);
-          if (p > 100) lowestPrice = p;
+          if (p > 100) { lowestPrice = p; console.log(`[Scraper] ✅ nepPrice regex → LowestForYou:₹${p}`); }
         }
       }
 
@@ -252,16 +263,15 @@ async function scrapeFK(url) {
         const fpMatch = html.match(/"finalPrice"\s*:\s*(\d+)/);
         if (fpMatch) {
           const p = parseInt(fpMatch[1]);
-          if (p > 100) price = p;
+          if (p > 100) { price = p; console.log(`[Scraper] ✅ finalPrice regex → Price:₹${p}`); }
         }
       }
 
-      // STRATEGY 2: CSS DOM Selectors Layer
       if (!price) {
         for (const s of ['div.Nx9bqj.CxhGGd', 'div.Nx9bqj', '.CEmiEU .Nx9bqj', '._30jeq3._16Jk6d', '._16Jk6d']) {
           const t = $(s).first().text().trim();
           const p = parsePrice(t);
-          if (p && p > 100) { price = p; break; }
+          if (p && p > 100) { price = p; console.log(`[Scraper] price via selector "${s}": ₹${p}`); break; }
         }
       }
 
@@ -269,10 +279,12 @@ async function scrapeFK(url) {
       const effectivePrice = Math.min(price, lowestPrice);
 
       if (!price) {
+        console.log(`[Scraper] Attempt ${attempt}: no price found`);
         if (attempt < 3) { await sleep(3000); continue; }
         return null;
       }
 
+      console.log(`[Scraper] ✅ "${name.slice(0, 35)}" | PriceToBuy:₹${price} | LowestForYou:₹${lowestPrice} | Effective:₹${effectivePrice}`);
       return { name, price, lowestPrice, effectivePrice };
 
     } catch (e) {
@@ -310,10 +322,7 @@ async function runCheck() {
   for (const p of db.products) {
     try {
       const info = await scrapeFK(p.url);
-      if (!info || !info.price) { 
-        console.log(`[Check] ⚠️  No data: ${p.name.slice(0, 30)}`); 
-        continue; 
-      }
+      if (!info || !info.price) { console.log(`[Check] ⚠️  No data: ${p.name.slice(0, 30)}`); continue; }
 
       const prevEff = p.effectivePrice || p.lowestPrice || p.price;
       const newEff  = info.effectivePrice;
@@ -330,20 +339,23 @@ async function runCheck() {
           msg += `${d < 0 ? '🎉📉' : '📈'} <b>Best Price for You:</b>\n  Was: ₹${fmt(prevEff)}\n  Now: ₹${fmt(newEff)}\n  <b>${d < 0 ? '▼ DROPPED ₹' : '▲ UP ₹'}${fmt(Math.abs(d))}</b>\n\n`;
           p.effectivePrice = newEff;
         }
-        if (pc) {
-          p.price = info.price;
-        }
-        if (lc) {
-          p.lowestPrice = info.lowestPrice;
-        }
+        if (pc) p.price = info.price;
+        if (lc) p.lowestPrice = info.lowestPrice;
+        
         msg += `\n🔗 <a href="${p.url}">View on Flipkart</a>\n⏰ ${new Date().toLocaleString('en-IN')}`;
         saveDB();
-        const targets = [...new Set([ADMIN_CHAT_ID, ...db.approvedUsers])];
-        for (const uid of targets) await tg(uid, msg);
-        console.log(`[Alert] 🔔 Sent: ${p.name.slice(0, 30)}`);
+        
+        // 🔥 Send alert ONLY to the specific user who added this product mapping route
+        await tg(p.addedBy, msg);
+        
+        // Also keep admin in loop if admin didn't add it
+        if (String(p.addedBy) !== String(ADMIN_CHAT_ID)) {
+          await tg(ADMIN_CHAT_ID, `💡 [User Alert Copy]\n${msg}`);
+        }
+        console.log(`[Alert] 🔔 Sent to ${p.addedBy}: ${p.name.slice(0, 30)}`);
       } else {
         console.log(`[Check] ✅ No change: ${p.name.slice(0, 30)} | Buy:₹${info.price} | LowestForYou:₹${info.lowestPrice}`);
-        saveDB();
+        saveDB(); 
       }
     } catch (e) { console.error('[Check] Error:', e.message); }
   }
@@ -539,7 +551,6 @@ const PANEL = '<!DOCTYPE html>\n' +
 '  var url=document.getElementById("purl").value.trim();\n' +
 '  if(!url)return toast("Enter a URL","err");\n' +
 '  if(!url.includes("flipkart.com"))return toast("Only Flipkart links!","err");\n' +
-'  制造log("Fetching: "+url.slice(0,55)+"\\u2026");\n' +
 '  try{\n' +
 '    var r=await fetch("/api/products",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:url})});\n' +
 '    var d=await r.json();\n' +
